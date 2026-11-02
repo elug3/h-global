@@ -1,5 +1,5 @@
 # h-global TODO
 
-> 출처: 2026-10-31 회의 (확정 사항)
+> Source: 2026-10-31 meeting (confirmed items)
 
-- [ ] 디자인 초안 — **기한: 2026-11-08**
+- [ ] Design draft — **Due: 2026-11-08**

@@ -1,26 +1,26 @@
 # Dupli1 TODO
 
-> 출처: 2026-10-31 회의 (확정 사항)
+> Source: 2026-10-31 meeting (confirmed items)
 >
-> Dupli1 = 사진·설명·수치만으로 상품을 등록하는 기존 입력 툴. h-global 상품 등록도 Dupli와 비슷한 방식으로 만들어 달라는 요청이 있었다.
+> Dupli1 = the existing product input tool where a product is registered with just photos, a description, and specs. The meeting asked for h-global product registration to work in a similar way.
 
-## 1. 입력 양식 표준화
-- [ ] 필수 입력 필드 확정: **사진 / 설명 / 수치(가격·사이즈 등)**
-- [ ] 사이즈·컬러 **변종(Variant)** 입력 정리 (옆으로 넘겨 추가 입력)
-- [ ] 색상 속성 필드 (예: 블랙)
-- [ ] 판매자가 직접 사진을 올리기 쉬운 업로드 UX
-- [ ] 입력 양식 표준 문서화
+## 1. Standardize the input form
+- [ ] Finalize required fields: **photos / description / specs (price, size, etc.)**
+- [ ] Organize size and color **variant** input (swipe sideways to add more)
+- [ ] Color attribute field (e.g. Black)
+- [ ] Upload UX that makes it easy for sellers to add photos themselves
+- [ ] Document the standard input form
 
-## 2. 사이트 UI/UX (h-global에서 이관)
-- [ ] 원가 숨기기 — **Official Price** 표기 비노출 처리
-- [ ] PDP 하단 검수 사진/영상 섹션 + 판매 시 촬영·업로드 절차
-- [ ] 1:1 상담 모듈 (카톡 대체, 사이트 내 상담)
-- [ ] 통관 절차: 주문→검수→해외 통관번호 입력/확인→발송
-- [ ] 리뷰 기능
+## 2. Site UI/UX (moved from h-global)
+- [ ] Hide the original price: do not display **Official Price**
+- [ ] Inspection photo/video section at the bottom of the PDP, plus the shooting and upload process at time of sale
+- [ ] 1:1 chat module (replaces KakaoTalk; in-site support)
+- [ ] Customs flow: order -> inspection -> enter/verify overseas customs number -> shipping
+- [ ] Reviews feature
 
-## 3. PDP 컬러 표시
-- [ ] PDP **Color Swatch** 샘플 디자인
-- [ ] **Two-tone color swatch** 샘플 디자인 (2색 조합 상품용)
+## 3. PDP color display
+- [ ] Sample design for the PDP **Color Swatch**
+- [ ] Sample design for the **two-tone color swatch** (products with two-color combinations)
 
 ## 4. Master Catalog
-- [ ] Master catalog에 **hex color** 필드 추가 검토 (swatch 렌더링용, two-tone은 2개 값 저장 방식 포함)
+- [ ] Review adding a **hex color** field to the master catalog (for swatch rendering; include how to store two values for two-tone)
