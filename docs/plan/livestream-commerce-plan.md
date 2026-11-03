@@ -59,6 +59,11 @@ Target: **under 60 seconds from screenshot to buyable product.**
 | C. Server pulls the stream and extracts frames | e.g. ffmpeg on the live stream | Higher quality but heavier, and may conflict with YouTube terms. Consider later. |
 | D. Capture from the broadcast PC / encoder (OBS) | Hotkey on the streaming PC sends a frame | Best image quality. Option for later if A is not sharp enough. |
 
+Option A reference: the browser's Screen Capture API, `navigator.mediaDevices.getDisplayMedia()`
+([MDN guide](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Capture_API/Using_Screen_Capture),
+[MDN getDisplayMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getDisplayMedia),
+[W3C spec](https://w3c.github.io/mediacapture-screen-share/)). The user picks a tab/window/screen once per stream; frames are drawn to a `<canvas>` and saved as an image. Requires HTTPS and a desktop browser.
+
 **Broadcast timestamp:** offset = capture time − stream start time (from the YouTube API), minus a few seconds for delay.
 It links to the replay as `youtube.com/watch?v={videoId}&t={offset}s`.
 
