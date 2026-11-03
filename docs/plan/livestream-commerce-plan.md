@@ -1,72 +1,121 @@
-# H-Global Live Commerce Plan (draft)
+# H-Global Live Commerce Plan (draft v2)
 
-> H-Global: an e-commerce service that lists bags in real time during YouTube live streams.
+> H-Global sells products (bags, cosmetics, and more) in real time during YouTube live streams.
 > Status: draft for discussion. Feeds the **design draft due 2026-11-08** (see `docs/todo/h-global-todo.md`).
+> v2 (2026-11-03): rebuilt around **capture-and-list from manage-web**, based on the requirements below.
 
-## 1. Core idea
-YouTube hosts the video; H-Global hosts the shop. While a seller presents a bag on stream, an operator
-"drops" that bag onto a live shop page synced to the stream. Viewers buy on H-Global, not in YouTube chat.
+## 1. Why we need this
 
-Why not sell inside YouTube? YouTube Shopping requires approved merchant integrations and gives little control
-over one-of-a-kind items, inspection media and customs. A companion page keeps checkout, stock, and the
-customs flow under our control, linked from the stream description, pinned chat message and on-screen QR code.
+- **Products we see for the first time on location.** Streams filmed while touring markets and warehouses
+  show items that were never registered and have no product data. Sometimes we only learn on air whether
+  an item is a toner or a mist, so it cannot be registered in advance.
+- **Viewers must be able to buy right away.** "What I wanted was for the items currently being promoted to go live immediately."
+- **Sales keep going after the stream.** Products stay up for a few days, and one more ad goes out to
+  regular KakaoTalk customers after the stream.
+- **No commission.** Platforms like ClickMate already offer this. Building it on our own site avoids their fees.
 
-## 2. Users
-| Role | Needs |
+If a stream only sells products that are already registered, all we need is the order in which they are featured.
+This plan handles both cases.
+
+## 2. People during a stream
+
+| Role | What they do |
 |---|---|
-| Viewer / buyer | See the bag on stream, tap once, reserve before someone else does, pay, track customs/shipping |
-| Host (on camera) | Know what is next and what sold, without touching a computer |
-| Operator (off camera) | Queue products, push "now showing", set price/stock, close sales, answer chat |
-| Admin | Register products (Dupli1-style form), inspection media, orders, customs |
+| Manager (on location / host side) | Presents the products. Says which items are worn or held today. |
+| CS representative (at manage-web) | **Captures the stream, sets the price and options, publishes.** Answers customers. |
+| Viewer / buyer | Watches on YouTube, opens the live section on the site, buys. |
 
-## 3. Live flow
-1. **Before stream**: register bags (photos / description / specs / color variants) → build a *show rundown* (ordered list).
-   Schedule stream; page `h-global.../live/{showId}` goes up with a countdown and the rundown preview.
-2. **During stream**: operator clicks **Now showing** → every viewer's page updates in < 1s (product card, price, Buy button).
-   Buyer taps **Buy** → item is **reserved for N minutes** (one-of-a-kind stock) → checkout.
-   Sold state is pushed to all viewers and to the host's monitor ("SOLD to @name").
-3. **After stream**: unsold items become normal listings; the stream VOD gets product timestamps
-   (chapters) so later viewers can jump to and buy each bag.
-4. **Fulfilment** (from Dupli1 TODO): order → inspection photo/video → overseas customs number entry/verify → shipping.
+## 3. Listing workflow in manage-web (the core feature)
 
-## 4. Key design decisions
-- **Stock = 1 for most bags.** Reservation hold (e.g. 5 min) with atomic decrement in DB; released on timeout. Waitlist "next in line" if the buyer drops.
-- **Sync to stream**: we drive state from operator actions, not from video timing. YouTube live latency (2–30s) is
-  unavoidable, so the operator can "pre-arm" a drop and the page shows "coming up".
-- **Real-time channel**: WebSocket/SSE fan-out (or a managed service such as Pusher/Ably/Supabase Realtime) — read-heavy, write-rare.
-- **YouTube integration (phase 2)**: YouTube Data API `liveChatMessages` to read chat (e.g. detect "buy 3" intents, auto-post pinned link per product). Respect API quota.
-- **Embed**: YouTube iframe embed on our page so viewers watch + buy in one screen (mobile-first, video top / product sheet bottom).
+Target: **under 60 seconds from screenshot to buyable product.**
 
-## 5. Data model (initial)
-- `Product` (from master catalog; hex color / two-tone swatch fields)
-- `Variant` (size, color, stock)
-- `Show` (youtubeVideoId, scheduledAt, status)
-- `ShowItem` (showId, productId, order, state: queued → live → sold/unsold, startedAt → VOD chapter)
-- `Reservation` (variantId, userId, expiresAt)
-- `Order` (status: paid → inspecting → customs_pending → shipped → delivered; customs number)
-- `InspectionMedia` (orderId, photos/video)
+```
+[Capture] -> [Crop] -> [Match?] -> [Price + options] -> [Publish]  => live on the site
+```
 
-## 6. Screens for the design draft (due 11/8)
-1. Live shop page – mobile (video + current product sheet + "up next" + sold ticker)
-2. Live shop page – desktop
-3. Product sheet / quick checkout with reservation countdown
-4. Operator console (rundown, Now showing, mark sold, viewer/sales counters)
-5. Host monitor view (big text: current item, price, SOLD alerts)
-6. PDP after stream (color swatch, inspection media section, no Official Price)
-7. Order tracking incl. customs number step
+1. **Capture.** The CS rep presses **Capture** (or a hotkey) while the stream plays in manage-web. One frame is grabbed
+   and the **broadcast timestamp is saved with it** (used later for "when it was broadcast").
+   Fallbacks: paste an image (Ctrl+V) or upload a file.
+2. **Crop.** Quick crop around the product (the frame often includes the manager's hands or face).
+3. **Match existing data.** The system searches the catalog for similar product photos and shows the top suggestions.
+   - **Match found:** the CS rep taps it and the size, color, quantity and unit price fill in automatically.
+   - **No match (new product):** only the essentials are entered: **price (e.g. 149,000 won)** and variations such as size.
+     The name defaults to "Live #9" and can be edited now or later. Other details are filled in after the stream.
+4. **Publish.** The product appears in the live section for every viewer within a few seconds.
+   It can still be edited (price, stock, photos, name) after it goes live.
 
-## 7. Phases
+### Pre-selected vs on-the-fly products
+
+- **Pre-selected:** before the stream, pick up to 8 registered products and number them **No. 1–8** (drag to reorder).
+- **On-the-fly:** products captured during the stream get the next number (No. 9, 10, ...).
+- Both kinds can be used in the same stream.
+
+### How the capture works (technical options)
+
+| Option | How | Verdict |
+|---|---|---|
+| A. Screen-capture API in the browser | manage-web asks to share the tab/window that shows the stream and grabs a frame | **Recommended for MVP.** No server video processing, works with any player. |
+| B. Grab from the embedded YouTube player | — | Not possible: browsers block reading pixels from the YouTube iframe. |
+| C. Server pulls the stream and extracts frames | e.g. ffmpeg on the live stream | Higher quality but heavier, and may conflict with YouTube terms. Consider later. |
+| D. Capture from the broadcast PC / encoder (OBS) | Hotkey on the streaming PC sends a frame | Best image quality. Option for later if A is not sharp enough. |
+
+**Broadcast timestamp:** offset = capture time − stream start time (from the YouTube API), minus a few seconds for delay.
+It links to the replay as `youtube.com/watch?v={videoId}&t={offset}s`.
+
+## 4. Live screen on the site (customer side)
+
+- **Red LIVE dot** in the header and on the live section while a stream is on.
+- **"Products sold during live streams"** is a section separate from the total inventory.
+  - **Top:** items worn or held today (the CS rep pins them).
+  - **Below:** the other products from this stream, in order No. 1, 2, 3, ...
+  - Newly published items appear without a page reload.
+- Video embed plus product list on one screen (mobile first: video on top, products below).
+- **Product page:** shows **"Broadcast on 2026-11-03 14:32"** with a button that opens the replay at that moment.
+- Uses the earlier site decisions: no Official Price, color swatches, inspection media section.
+
+## 5. After the stream
+
+- Products stay on the site for **N days** after the stream ends, then are **hidden automatically** (not deleted).
+  N is not decided yet. Make it a setting per stream (proposed default: 3 days), with an option to keep a product as a permanent listing.
+- **KakaoTalk follow-up:** a stream recap page (all products from the stream, with a link to the replay) plus a
+  ready-to-send link and share image for the KakaoTalk ad. Sending through the Kakao API directly can come later.
+- New products get their full details (description, specs, more photos) added after the stream and are saved to the
+  catalog, so next time they **match automatically** (section 3, step 3).
+
+## 6. manage-web screens
+
+1. **Stream setup:** YouTube link, scheduled time, pick No. 1–8, display days after the stream.
+2. **Live console (CS rep):** stream view plus Capture button; queue of published items; edit price/stock;
+   pin as worn or held today; sold and remaining counts; customer chat.
+3. **Quick listing panel:** crop → match suggestions → price/options → Publish.
+4. **After the stream:** list of products to finish (missing name/description), recap link for KakaoTalk, expiry dates.
+5. **Live products view:** products from streams, filtered separately from total inventory.
+
+## 7. Data model (initial)
+
+- `Show`: youtubeVideoId, scheduledAt, startedAt, endedAt, status (scheduled / live / ended), displayDaysAfter
+- `ShowItem`: showId, productId, number (1, 2, ...), source (preselected / captured), pinned (worn or held),
+  capturedImage, broadcastOffsetSec, publishedAt, hideAt
+- `Product`: draft fields allowed (only image + price required for live items), linked to the master catalog
+- `Variant`: size, color, quantity, unit price
+- `ImageEmbedding`: productId, vector (for matching screenshots to existing products)
+- `Order` / `Reservation`: as in v1 (hold stock during checkout so one-of-a-kind items are not sold twice)
+
+## 8. Phases
+
 | Phase | Scope | Target |
 |---|---|---|
-| 0 Design | Screens above, flow diagrams | 2026-11-08 |
-| 1 MVP | Product registration, Show/rundown, live page with embed, Now showing push, reservation + checkout, operator console | +4–6 weeks |
-| 2 Ops | Inspection media upload, customs flow, 1:1 chat, VOD chapters, analytics (views → taps → sales per item) | +4 weeks |
-| 3 Growth | YouTube chat integration, waitlist, reviews, notifications ("show starts in 10 min"), multi-host | later |
+| 0 Design | Screens in sections 4 and 6, listing flow | 2026-11-08 |
+| 1 MVP | Stream setup, screenshot capture (option A) and paste/upload, quick listing for new products, live section with LIVE dot, auto-hide after N days, "Broadcast on" link | +4–6 weeks |
+| 2 Match | Image matching to auto-fill existing products, pinned worn/held items, recap page for KakaoTalk, post-stream completion list | +3–4 weeks |
+| 3 Later | Higher-quality capture (option C or D), Kakao API sending, YouTube chat integration, analytics per item | later |
 
-## 8. Open questions
-- Payment provider & currencies (domestic vs overseas buyers)? Customs ⇒ which destination countries first?
-- Reservation length and whether unpaid holds get penalties.
-- Auction/bidding format or fixed price only?
-- Who operates during the stream — dedicated operator, or the host from a tablet?
-- Tech stack preference (e.g. Next.js + Postgres + managed realtime) and hosting.
-- KPIs for the first live: conversion per item, time-to-sold, checkout drop-off.
+## 9. Open questions
+
+1. How many days should products stay up after a stream? A per-stream setting is proposed, with a default of 3.
+2. What is the minimum info for a new product to go live? Proposed: photo + price, with name, options and quantity optional.
+3. Is quantity usually known on location, or should we allow "sell until we mark it sold out"?
+4. Which device will the CS rep use (PC browser recommended for screen capture)?
+5. When a screenshot matches an existing product, should it always be confirmed by the CS rep? (Proposed: yes, never auto-publish.)
+6. Which payment provider? Do customers need an account to buy during the stream?
+7. Which ClickMate features are used today and must be matched on day one?
