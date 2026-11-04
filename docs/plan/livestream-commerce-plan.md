@@ -2,7 +2,10 @@
 
 > H-Global sells products (bags, cosmetics, and more) in real time during YouTube live streams.
 > Status: draft for discussion. Feeds the **design draft due 2026-11-08** (see `docs/todo/h-global-todo.md`).
-> v2 (2026-11-03): rebuilt around **capture-and-list from manage-web**, based on the requirements below.
+> v2 (2026-11-03): rebuilt around **capture-and-list from H-Global Studio**, based on the requirements below.
+
+> **Naming:** the staff tool is **H-Global Studio** (code and folder name: `hglobal-studio`; formerly "manage-web").
+> Always say "H-Global Studio" in full so it isn't confused with YouTube Studio, which the team also uses during streams.
 
 ## 1. Why we need this
 
@@ -22,10 +25,10 @@ This plan handles both cases.
 | Role | What they do |
 |---|---|
 | Manager (on location / host side) | Presents the products. Says which items are worn or held today. |
-| CS representative (at manage-web) | **Captures the stream, sets the price and options, publishes.** Answers customers. |
+| CS representative (at H-Global Studio) | **Captures the stream, sets the price and options, publishes.** Answers customers. |
 | Viewer / buyer | Watches on YouTube, opens the live section on the site, buys. |
 
-## 3. Listing workflow in manage-web (the core feature)
+## 3. Listing workflow in H-Global Studio (the core feature)
 
 Target: **under 60 seconds from screenshot to buyable product.**
 
@@ -33,7 +36,7 @@ Target: **under 60 seconds from screenshot to buyable product.**
 [Capture] -> [Crop] -> [Match?] -> [Price + options] -> [Publish]  => live on the site
 ```
 
-1. **Capture.** The CS rep presses **Capture** (or a hotkey) while the stream plays in manage-web. One frame is grabbed
+1. **Capture.** The CS rep presses **Capture** (or a hotkey) while the stream plays in H-Global Studio. One frame is grabbed
    and the **broadcast timestamp is saved with it** (used later for "when it was broadcast").
    Fallbacks: paste an image (Ctrl+V) or upload a file.
 2. **Crop.** Quick crop around the product (the frame often includes the manager's hands or face).
@@ -54,7 +57,7 @@ Target: **under 60 seconds from screenshot to buyable product.**
 
 | Option | How | Verdict |
 |---|---|---|
-| A. Screen-capture API in the browser | manage-web asks to share the tab/window that shows the stream and grabs a frame | **Recommended for MVP.** No server video processing, works with any player. |
+| A. Screen-capture API in the browser | H-Global Studio asks to share the tab/window that shows the stream and grabs a frame | **Recommended for MVP.** No server video processing, works with any player. |
 | B. Grab from the embedded YouTube player | — | Not possible: browsers block reading pixels from the YouTube iframe. |
 | C. Server pulls the stream and extracts frames | e.g. ffmpeg on the live stream | Higher quality but heavier, and may conflict with YouTube terms. Consider later. |
 | D. Capture from the broadcast PC / encoder (OBS) | Hotkey on the streaming PC sends a frame | Best image quality. Option for later if A is not sharp enough. |
@@ -87,7 +90,7 @@ It links to the replay as `youtube.com/watch?v={videoId}&t={offset}s`.
 - New products get their full details (description, specs, more photos) added after the stream and are saved to the
   catalog, so next time they **match automatically** (section 3, step 3).
 
-## 6. manage-web screens
+## 6. H-Global Studio screens
 
 1. **Stream setup:** YouTube link, scheduled time, pick No. 1–8, display days after the stream.
 2. **Live console (CS rep):** stream view plus Capture button; queue of published items; edit price/stock;
