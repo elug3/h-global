@@ -629,8 +629,9 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
   (`P` + 12 digits) plus a staff confirmation. Later: Korea Customs (UNI-PASS) lookup, once API
   access is confirmed.
 - **shipped** requires a carrier and tracking number.
-- **Order number** `HG-YYMMDD-XXXXX` (e.g. `HG-261107-00042`): the order date in Korea time and the
-  day's count from 00001, without gaps. Easy to read out on the phone or in KakaoTalk; the internal
+- **Order number** `HG-YYMMDD-XXXXX` (e.g. `HG-261107-7KQ4M`): the order date in Korea time and five
+  random characters (digits 2–9 and consonants, so nothing to confuse and no words), which do not
+  reveal how many orders a day brings. Easy to read out on the phone or in KakaoTalk; the internal
   ID stays a UUID.
 - Every change is an event: Telegram alerts for staff, email (later Kakao) to the customer, and a
   live update in Studio.

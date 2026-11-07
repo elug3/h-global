@@ -2,9 +2,9 @@ package order
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -15,7 +15,12 @@ import (
 )
 
 // Postgres stores orders.
-type Postgres struct{ DB *db.DB }
+type Postgres struct {
+	DB *db.DB
+	// Code makes the random part of order numbers; nil means RandomCode.
+	// Tests replace it to force a clash.
+	Code func() string
+}
 
 const orderCols = `id, number, customer_id, status, subtotal_won, shipping_fee_won, total_won, refunded_won,
 	shipping, payment_method, payment_deadline, paid_at, inspection_done_at, customs_checked_at, shipped_at,
@@ -37,37 +42,59 @@ func scanOrder(row pgx.Row) (Order, error) {
 	return o, err
 }
 
-// nextNumber returns the next order number, HG-YYMMDD-XXXXX: today's date in
-// Korea time and the day's count from 00001 (more than 99,999 orders in a day
-// would give six digits). It must run in the order's transaction: the day's
-// row stays locked until commit, and a rollback gives the count back.
-func (p Postgres) nextNumber(ctx context.Context) (string, error) {
-	var day time.Time
-	var n int
-	err := p.DB.Q(ctx).QueryRow(ctx,
-		`INSERT INTO order_number_days (day, last) VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date, 1)
-		 ON CONFLICT (day) DO UPDATE SET last = order_number_days.last + 1
-		 RETURNING day, last`).Scan(&day, &n)
-	if err != nil {
-		return "", err
+// Order numbers are HG-YYMMDD-XXXXX: the order date in Korea time and five
+// random characters. The alphabet has no 0/O, 1/I/L or vowels, so a number is
+// easy to read out and never spells a word: 27^5 ≈ 14 million codes a day.
+const codeAlphabet = "23456789BCDFGHJKMNPQRSTVWXZ"
+
+// RandomCode returns five random characters from codeAlphabet.
+func RandomCode() string {
+	var b [5]byte
+	buf := make([]byte, 16)
+	for i := 0; i < len(b); {
+		if _, err := rand.Read(buf); err != nil {
+			panic(err) // crypto/rand does not fail on supported platforms
+		}
+		for _, x := range buf {
+			// 243 = 27 * 9: drop larger bytes so every character is equally likely.
+			if x < 243 && i < len(b) {
+				b[i] = codeAlphabet[int(x)%len(codeAlphabet)]
+				i++
+			}
+		}
 	}
-	return fmt.Sprintf("HG-%s-%05d", day.Format("060102"), n), nil
+	return string(b[:])
 }
+
+// numberTries bounds retries when a random code is already taken that day.
+const numberTries = 5
 
 func (p Postgres) insert(ctx context.Context, n NewOrder, subtotal int64) (uuid.UUID, error) {
 	q := p.DB.Q(ctx)
 	id := ids.New()
 	ship, _ := json.Marshal(n.Shipping)
-	number, err := p.nextNumber(ctx)
-	if err != nil {
-		return uuid.Nil, err
+	code := p.Code
+	if code == nil {
+		code = RandomCode
 	}
-	if _, err := q.Exec(ctx,
-		`INSERT INTO orders (id, number, customer_id, status, subtotal_won, shipping_fee_won, total_won, shipping,
-		                     payment_method, payment_deadline)
-		 VALUES ($1, $2, $3, 'pending_payment', $4, $5, $6, $7, $8, $9)`,
-		id, number, n.CustomerID, subtotal, n.ShippingFeeWon, subtotal+n.ShippingFeeWon, ship, n.PaymentMethod, n.Deadline); err != nil {
-		return uuid.Nil, err
+	// The date comes from the database clock, like created_at. A taken number
+	// inserts nothing (no error, so the transaction goes on) and is retried.
+	inserted := false
+	for try := 0; try < numberTries && !inserted; try++ {
+		tag, err := q.Exec(ctx,
+			`INSERT INTO orders (id, number, customer_id, status, subtotal_won, shipping_fee_won, total_won, shipping,
+			                     payment_method, payment_deadline)
+			 VALUES ($1, 'HG-' || to_char(now() AT TIME ZONE 'Asia/Seoul', 'YYMMDD') || '-' || $2,
+			         $3, 'pending_payment', $4, $5, $6, $7, $8, $9)
+			 ON CONFLICT (number) DO NOTHING`,
+			id, code(), n.CustomerID, subtotal, n.ShippingFeeWon, subtotal+n.ShippingFeeWon, ship, n.PaymentMethod, n.Deadline)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		inserted = tag.RowsAffected() == 1
+	}
+	if !inserted {
+		return uuid.Nil, fmt.Errorf("no free order number after %d tries", numberTries)
 	}
 	for i, l := range n.Lines {
 		if _, err := q.Exec(ctx,

@@ -4678,7 +4678,7 @@ export interface components {
         Order: {
             /** Format: uuid */
             id: string;
-            /** @description HG-YYMMDD-XXXXX: the order date in Korea time and the day's count from 00001, e.g. HG-261107-00042. */
+            /** @description HG-YYMMDD-XXXXX: the order date in Korea time and five random characters (digits 2-9 and consonants), e.g. HG-261107-7KQ4M. */
             number: string;
             /** Format: uuid */
             customer_id: string;

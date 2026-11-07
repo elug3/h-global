@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"sort"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -137,7 +137,7 @@ func TestOrderSearchCountsAndShowSales(t *testing.T) {
 	}
 }
 
-func TestOrderNumbersCountPerDay(t *testing.T) {
+func TestOrderNumbers(t *testing.T) {
 	a, base := setup(t)
 	ctx := context.Background()
 	cust, err := a.Account.Register(ctx, account.NewCustomer{Email: "n@example.com", Password: "n-password"})
@@ -157,15 +157,10 @@ func TestOrderNumbersCountPerDay(t *testing.T) {
 		}
 	}
 	today := time.Now().In(time.FixedZone("KST", 9*3600)).Format("060102") // Korea has no daylight saving
+	format := regexp.MustCompile(`^HG-` + today + `-[23456789BCDFGHJKMNPQRSTVWXZ]{5}$`)
 
-	// Yesterday was busy; today still starts from 00001.
-	if _, err := a.DB.Pool.Exec(ctx,
-		`INSERT INTO order_number_days (day, last) VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date - 1, 500)`); err != nil {
-		t.Fatal(err)
-	}
-
-	// Ten orders at once: every number is different, and the day counts 1 to 10.
-	const n = 10
+	// Twenty orders at once: Korean date, five random characters, all different.
+	const n = 20
 	numbers := make([]string, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
@@ -181,42 +176,40 @@ func TestOrderNumbersCountPerDay(t *testing.T) {
 	if err := errors.Join(errs...); err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(numbers)
-	for i, got := range numbers {
-		if want := fmt.Sprintf("HG-%s-%05d", today, i+1); got != want {
-			t.Fatalf("number %d = %s, want %s (all: %v)", i, got, want, numbers)
+	seen := map[string]bool{}
+	for _, num := range numbers {
+		if !format.MatchString(num) || seen[num] {
+			t.Fatalf("number %q: bad format or repeated (all: %v)", num, numbers)
 		}
+		seen[num] = true
 	}
 
-	// A rolled-back order gives its count back: no gaps.
-	rollback := errors.New("rollback")
-	err = a.DB.InTx(ctx, func(ctx context.Context) error {
-		if _, err := a.Orders.Create(ctx, newOrder()); err != nil {
-			return err
-		}
-		return rollback
-	})
-	if !errors.Is(err, rollback) {
-		t.Fatalf("rollback: %v", err)
+	// A taken code is retried with a new one; if every try is taken, the order fails.
+	codes := []string{"BBBBB", "BBBBB", "CCCCC"}
+	a.Orders.Store.Code = func() string { c := codes[0]; codes = codes[1:]; return c }
+	first, err := a.Orders.Create(ctx, newOrder())
+	if err != nil || first.Number != "HG-"+today+"-BBBBB" {
+		t.Fatalf("first: %s %v", first.Number, err)
 	}
-	o, err := a.Orders.Create(ctx, newOrder())
-	if err != nil || o.Number != fmt.Sprintf("HG-%s-%05d", today, 11) {
-		t.Fatalf("after rollback: %s %v", o.Number, err)
+	second, err := a.Orders.Create(ctx, newOrder())
+	if err != nil || second.Number != "HG-"+today+"-CCCCC" {
+		t.Fatalf("after a clash: %s %v", second.Number, err)
 	}
+	a.Orders.Store.Code = func() string { return "BBBBB" }
+	if _, err := a.Orders.Create(ctx, newOrder()); err == nil {
+		t.Fatal("every code taken: want an error")
+	}
+	a.Orders.Store.Code = nil
 
-	// Staff find it with or without the hyphens.
+	// Staff find an order with or without the hyphens, in any case.
 	staff := newClient(t, base)
 	staff.do("POST", "/studio-api/auth/login", obj{"email": "owner@hglobal.test", "password": "owner-password"}, 200, nil)
-	for _, q := range []string{o.Number, strings.ReplaceAll(strings.TrimPrefix(o.Number, "HG-"), "-", ""), "hg-" + today} {
+	for _, q := range []string{second.Number, strings.ReplaceAll(strings.TrimPrefix(second.Number, "HG-"), "-", ""), "ccccc"} {
 		var res obj
 		staff.do("GET", "/studio-api/orders?q="+url.QueryEscape(q), nil, 200, &res)
 		items := res["items"].([]any)
-		found := false
-		for _, it := range items {
-			found = found || it.(obj)["number"] == o.Number
-		}
-		if !found {
-			t.Errorf("search %q did not find %s (%d results)", q, o.Number, len(items))
+		if len(items) != 1 || items[0].(obj)["number"] != second.Number {
+			t.Errorf("search %q: want only %s, got %d results", q, second.Number, len(items))
 		}
 	}
 }
