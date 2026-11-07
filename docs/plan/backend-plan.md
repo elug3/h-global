@@ -50,9 +50,13 @@ with an MJPEG preview instead of WebRTC. Frames reach hg-server about 0.5 s afte
 local tests; see [docs/prototype/relay.md](../prototype/relay.md) for results, differences from
 5.5 and how to measure on H-Global's server.
 
+**hg-studio (2026-11-07):** sign-in, stream setup and the live console are built in Korean
+([hg-studio/README.md](../../hg-studio/README.md)), tested end to end in a browser against hg-server
+and the relay.
+
 **Not built yet:** YouTube Data API, hg-agent (5.6),
 notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
-the internal API, storefront and hg-studio.
+the internal API, storefront, and hg-studio's orders, product editing and after-stream screens.
 
 ## 1. Summary
 
