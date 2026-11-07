@@ -1,317 +1,347 @@
-# H-Global Backend Plan (draft v1)
+# H-Global Backend Plan (draft v2)
 
-> Status: draft for discussion, 2026-11-06. Nothing is built yet.
+> Status: draft for discussion, 2026-11-07. Nothing is built yet.
 > Builds on: the live commerce plan (`docs/plan/livestream-commerce-plan.md` on branch
-> `claude/h-global-livestream-plan-tj066k`), the UI design draft in Figma
-> ([H-Global UI — Design draft](https://www.figma.com/design/vNXgKEBXrTOleCbgKOqD4G)), and the
-> Dupli1 backend as of `elug3/dupli1@787d27c`.
+> `claude/h-global-livestream-plan-tj066k`) and the UI design draft in Figma
+> ([H-Global UI — Design draft](https://www.figma.com/design/vNXgKEBXrTOleCbgKOqD4G)).
+>
+> v2: H-Global is **its own service, separate from Dupli1**, built as a **monolith**. Products are
+> created on the spot during a stream; nothing has to be prepared in advance. v1 (built on Dupli1's
+> microservices) is replaced.
 
 ## 1. Summary
 
-**Do not build a second commerce backend.** Dupli1 already runs, in production, almost everything a
-store needs: accounts and permissions, a product catalog with SKUs, color swatches and stock,
-cart, checkout with stock reservation, card payment, the order lifecycle with a required inspection
-video before shipping, the overseas customs code (PCCC) on shipping addresses, 1:1 web chat, and
-Telegram ops alerts.
+H-Global is one Go program with one PostgreSQL database and one object-storage bucket. It serves:
 
-What H-Global adds is **live commerce**, and that is one new service:
+- the **storefront** API (home, live page, product page, cart, checkout, account, 1:1 chat), and
+- the **H-Global Studio** API (stream setup, live console, quick listing, orders, chat inbox),
 
-- **`live`** — streams (shows), the numbered items in each stream, quick listing from a captured
-  frame, pinning "worn or held today", a real-time feed to viewers, YouTube timestamps, and hiding
-  items N days after the stream.
+and runs its background jobs (hold expiry, unpaid-order cancel, auto-hide after a stream, YouTube
+polling) in the same process.
 
-`live` is written in Go to Dupli1's conventions and **calls Dupli1's product service** to create
-the products it lists. It never stores prices, stock or orders itself. Checkout, payment and
-shipping run through the existing Dupli1 services unchanged.
+The main difference from Dupli1 is the product model. **Dupli1 needs brands, styles, colors, sizes
+and SKU codes prepared before a product can exist. H-Global creates a product from a captured frame
+and a price.** Options such as color and size are typed or picked from recently used values at
+listing time, and everything else can be filled in after the stream.
 
 ```
-                    ┌──────────────── H-Global storefront (web) ────────────────┐
-                    │  home · live page · product page · cart · checkout         │
-                    └───────────────┬───────────────────────────┬───────────────┘
-                                    │ REST + SSE (via BFF)      │ REST
-┌── H-Global Studio (staff web) ──┐ │                           │
-│ stream setup · live console     │ │                           │
-└──────────────┬──────────────────┘ │                           │
-               │ REST + SSE         │                           │
-          ┌────▼────────────────────▼────┐       nginx gateway (routes.conf)
-          │            live  (NEW)       │──────────────┐
-          │ shows · items · captures     │              │ service account
-          │ SSE hub · hide worker        │              ▼
-          └──┬───────────┬───────────┬───┘   ┌─────── Dupli1 services (existing) ───────┐
-             │           │           │       │ product: catalog, SKUs, images, stock     │
-     Postgres│     NATS  │   S3      │       │ order: checkout, reservations, lifecycle  │
-     `live`  │  live.*   │ captures  │       │ payment · cart · auth · profile (PCCC)    │
-             ▼           ▼           ▼       │ support (1:1 chat) · notification (ops)   │
-                                             └───────────────────────────────────────────┘
-          YouTube Data API: stream start time, viewer count
+ Storefront (web) ──┐                       ┌── H-Global Studio (staff web)
+                    │ REST + SSE            │ REST + SSE
+              ┌─────▼───────────────────────▼─────┐
+              │          hglobal (one binary)     │
+              │ ┌───────┐ ┌───────┐ ┌──────────┐  │
+              │ │catalog│ │ live  │ │ checkout │  │     YouTube Data API
+              │ └───────┘ └───────┘ └──────────┘  │ ──▶ (start time, viewers)
+              │ ┌───────┐ ┌───────┐ ┌──────────┐  │
+              │ │ order │ │payment│ │ support  │  │ ──▶ Payment provider
+              │ └───────┘ └───────┘ └──────────┘  │     (card, virtual account)
+              │ ┌───────┐ ┌───────┐ ┌──────────┐  │
+              │ │account│ │ media │ │  notify  │  │ ──▶ Email / Telegram / Kakao
+              │ └───────┘ └───────┘ └──────────┘  │
+              │  platform: http · auth · sse hub · jobs · events
+              └──────┬──────────────────────┬─────┘
+                     ▼                      ▼
+                PostgreSQL            Object storage (S3-compatible)
+              (+ pgvector, Phase 2)   photos, captures, inspection videos
 ```
+
+### Why a monolith fits
+
+- **Publishing a live item is one database transaction.** The product, its options, its variants,
+  their stock, the numbered stream item and the viewer event commit together or not at all. With
+  separate services the same step needed a multi-call saga with retries.
+- **One thing to deploy and back up.** The team runs one binary and one database.
+- **The load is small for one process.** 1–2k viewers on a live feed, a few staff, bursts of orders
+  when an item is shown on air.
+- **Modules keep it splittable.** Each module owns its tables and is reached only through its
+  service interface (section 3). If one part ever needs to scale alone, it can be cut out along that
+  line.
 
 ## 2. Decisions to make first
 
-These change the plan. The recommendation is in the second column.
+The recommendation is in the second column.
 
 | # | Question | Recommendation | Why it matters |
 |---|---|---|---|
-| D1 | Does H-Global share Dupli1's catalog, customers and orders, or run separately? | **Separate deployment of the same Dupli1 images** (own databases, own domain, own staff accounts), plus `live`. | One deployment would need a "channel" field threaded through product, order, cart and reports. A separate deployment needs no change to Dupli1's data model and keeps the two businesses' customers, stock and money apart. |
-| D2 | Where are customers? | **Confirm.** Dupli1 is KRW-only and its PCCC field is for buyers *in Korea* receiving overseas-sourced goods. | If buyers are in Korea, everything fits. If buyers are abroad, currency, payment provider and shipping are all new work, and that is far bigger than live commerce. (The Figma checkout currently shows a US address; that should change if buyers are in Korea.) |
-| D3 | Payment provider and merchant account | **Confirm.** Dupli1 supports NANO card (with a 10% card surcharge setting) and staff Bypass. Bank transfer is not built. | The meeting wants payments on the site, under a name that keeps the owner's personal name off payment paths. Whose merchant account is used is a business decision. |
-| D4 | Where does the `live` code live? | **In the `dupli1` monorepo as `live/`.** The h-global repo keeps the plans, the design and the H-Global frontends. | `live` needs Dupli1's `shared` packages (permissions, events, outbox, auth middleware), its single Dockerfile, its gateway route table and its deploy files. Living elsewhere means copying all of that. |
-| D5 | How is a brand-new item from the stream filed in the catalog? | **Under a placeholder brand (e.g. `HGL`, "H-Global Live"), one style per item.** | Dupli1 requires an existing brand and style before a product can be created, and SKU color/size codes cannot change later. Quick listing cannot wait for a real brand. A later step can create the proper catalog product and link it (see 6.7). |
-| D6 | Quantity unknown on location | **Allow "sell until sold out": stock is set to a ceiling (e.g. 99) and the CS rep marks it sold out.** | Dupli1 treats zero stock as not for sale, so "unknown" has to become a number. The risk is selling more than exist; the CS rep sees orders arrive live and can stop it. |
-| D7 | When is a one-of-a-kind item held for the buyer? | **MVP: keep Dupli1's rule.** Stock is reserved when the buyer presses Pay, then they have 5 minutes to pay. Later: hold at "Buy now". | Holding earlier is better for one-of-a-kind items but changes the order service. The Figma checkout shows the hold timer before the address step; with the MVP rule it belongs on the pay step and lasts 5 minutes. |
+| D1 | Where are customers, and in what currency do they pay? | **Confirm.** The customs-number step in the meeting (order → inspection → customs number → shipping) is Korea's personal customs code (PCCC, `P` + 12 digits), used by buyers **in Korea** receiving goods from abroad. If so: KRW, Korean addresses. | Decides currency, payment provider, address format and shipping. The Figma checkout shows a US address, which should change if buyers are in Korea. |
+| D2 | Payment provider | **Pick one Korean PG offering card and virtual-account (가상계좌) payments** with a deposit webhook. | The meeting's pain point is confirming bank deposits by hand. A virtual account per order reports the deposit automatically. The merchant name on the account also settles the "keep the owner's name off payments" concern. |
+| D3 | How customers sign in | **Kakao login plus email.** Allow browsing and cart without an account, but ask for sign-in at checkout. | Live viewers arrive from YouTube on their phones, so one-tap sign-in matters. Sign-in at checkout gives chat, order history and the customs number a home. Guest checkout is possible later. |
+| D4 | When is a one-of-a-kind item held for the buyer? | **At "Buy now" / start of checkout, for 10 minutes.** | Two viewers will press Buy on the same bag in the same second. Holding at Buy now means the one who gets it can finish the address and customs steps without losing it. The Figma checkout already shows this timer. |
+| D5 | Quantity unknown on location | **Stock mode "until sold out"**: no count, sellable until the CS rep marks it sold out. Ask for a count whenever one is known. | It's our own model, so no fake ceiling is needed. The risk is overselling; the console shows orders arrive per item so the CS rep can stop in time. |
+| D6 | Days on sale after a stream | **Setting per stream, default 3.** Items are hidden, not deleted, and can be kept permanently. | From the meeting; the number of days was not decided. |
+| D7 | Hosting | **Confirm.** One container + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
 
-## 3. What Dupli1 already covers
+## 3. Code layout
 
-| H-Global need (from the plan and design) | Dupli1 today | Gap |
-|---|---|---|
-| Staff and customer accounts, roles | `auth`: JWT, fine-grained permissions, bundles | New `live.*` permissions and a `live_cs` bundle |
-| Product with photos, price, color and size options | `product`: parent + SKU variants, images, master dictionaries | Quick-listing flow (in `live`), placeholder brand (data) |
-| Color swatches, including two-tone | Color master `hex`; two-tone via the SKU's `color2Code` (since 2026-11-05) | None. (The Figma components note says the master catalog holds two hex values; Dupli1 decided to put the second color on the SKU instead.) |
-| Stock, sold out, no double-selling | `stock_items`, reservations at checkout, commit on ship | None for MVP |
-| No "Official Price" shown | `officialPrice` is optional | Frontend only: do not render it |
-| Cart, checkout, 5-minute payment window | `cart`, `order` checkout sessions | None |
-| Card payment | `payment`: NANO card, Bypass | D3 |
-| Order → inspection → customs → shipping | Order lifecycle; ship requires an inspection video; PCCC on the shipping address | PCCC is format-checked only, not verified with customs (6.8). A customs-cleared step is not a status. |
-| Inspection photos/video on the product page | Inspection video is per **order** (after sale) | Product-level inspection media before sale is new (6.8) |
-| 1:1 chat instead of KakaoTalk | `support` web chat (signed-in shoppers, SSE) + staff inbox | Reuse; the Studio Chat tab calls support's inbox API |
-| Ops alerts | `notification` → Telegram | Add `live.*` alerts (publish failed, stream started) |
-| Reviews | Not built (open in Dupli1's TODO) | Out of scope here |
-| **Streams, numbered items, capture, live feed, auto-hide, replay links** | — | **The `live` service (section 4)** |
-
-## 4. The `live` service
-
-Same layout as every Dupli1 service (`live/cmd`, `live/pkg/{domain,service,ports,infra,handler,bootstrap}`),
-stdlib `net/http`, PostgreSQL database `live`, NATS, S3-compatible storage for captured frames.
-It falls back to in-memory repositories when `DUPLI1_LIVE_DB` is unset, like order and cart, so the
-service tests need no database.
-
-### 4.1 Domain
-
-**Show** (one stream)
-
-| Field | Notes |
-|---|---|
-| `id` | ULID |
-| `youtube_video_id` | Parsed from the pasted link |
-| `title`, `scheduled_at` | Shown on the home page and the schedule |
-| `status` | `draft` → `scheduled` → `live` → `ended` |
-| `started_at`, `ended_at` | `started_at` from YouTube's actual start time when available, else the Start press |
-| `display_days_after` | Days items stay on sale after `ended_at`. Default 3. |
-| `next_number` | Next item number to hand out. Only ever increases. |
-| `host_name`, `cs_user_id` | Shown in Studio |
-
-**ShowItem** (one numbered product in a stream)
-
-| Field | Notes |
-|---|---|
-| `id`, `show_id` | |
-| `number` | 1, 2, 3 … Unique per show. **Never reused or renumbered once the show is live.** |
-| `source` | `preselected` or `captured` |
-| `product_id`, `sku_ids` | The Dupli1 product and variants this item sells |
-| `pinned` | "Worn or held today" |
-| `broadcast_offset_sec` | Seconds from stream start, for the replay link |
-| `capture_id` | The frame it was listed from, if captured |
-| `state` | `publishing` → `live` → `hidden`; or `failed` (with `last_error`) |
-| `stock_mode` | `counted` or `until_sold_out` (D6) |
-| `keep_listed` | If true, never auto-hidden |
-| `hide_at` | `ended_at + display_days_after`, set when the show ends |
-| `published_at`, `published_by` | For the audit trail and the NEW badge |
-
-**Capture**: `id`, `show_id`, object-storage key, `captured_at`, `broadcast_offset_sec`, crop box.
-
-Rules that belong in the domain:
-
-- Preselected items (No. 1–8) can be reordered only while the show is `draft` or `scheduled`.
-  Starting the show locks every number.
-- A captured item takes `next_number` in the same transaction that creates it, so two CS reps
-  listing at once never get the same number.
-- `hide_at` is computed once, at end of show. Changing `display_days_after` afterwards recomputes it
-  for items not yet hidden.
-- An item becomes visible to viewers only when it reaches `live`. A half-finished listing is never
-  shown (4.3).
-
-### 4.2 APIs
-
-Canonical prefix `/api/v1/live/`, routed in `api/gateway/routes.conf`.
-
-**Public (storefront, no sign-in)**
-
-| Method | Path | Returns |
-|---|---|---|
-| GET | `/shows/current` | The live show, else the next scheduled one (home banner) |
-| GET | `/shows?status=ended` | Recent streams (recaps) |
-| GET | `/shows/{id}` | Show + items: number, pinned, NEW flag, and a product summary (name, price, swatches, first image, `availableQty`) |
-| GET | `/shows/{id}/events` | **SSE** feed of changes to that show (4.4) |
-| GET | `/shows/{id}/recap` | Ended show: all items + replay link, for the KakaoTalk follow-up |
-| GET | `/products/{productId}/broadcasts` | Where a product was shown: show, time, replay URL `youtube.com/watch?v={id}&t={offset}s` (product page "Broadcast on…") |
-
-**Studio (staff; permission in brackets)**
-
-| Method | Path | Does |
-|---|---|---|
-| POST / PATCH | `/shows`, `/shows/{id}` | Create and edit a stream (`live.show.manage`) |
-| POST | `/shows/{id}/start`, `/shows/{id}/end` | Go live / end (`live.show.manage`) |
-| POST / DELETE | `/shows/{id}/items` | Add or remove a preselected catalog product (`live.show.manage`) |
-| PUT | `/shows/{id}/items/order` | Reorder No. 1–8 before going live (`live.show.manage`) |
-| POST | `/shows/{id}/captures` | Upload a captured frame; returns the capture and, from Phase 2, catalog match suggestions (`live.item.publish`) |
-| POST | `/shows/{id}/items/quick` | **Quick listing**: capture + crop + price + options → numbered live item (`live.item.publish`). Takes an `Idempotency-Key`. |
-| PATCH | `/items/{id}` | Edit price, stock, name, photos after publishing (`live.item.publish`) |
-| POST | `/items/{id}/pin`, `/unpin`, `/sold-out`, `/retry` | Pin "worn or held today", mark sold out, retry a failed listing (`live.item.publish`) |
-| GET | `/shows/{id}/console` | Console stats: sold / stock per item, orders and revenue for the show's SKUs, YouTube viewer count (`live.show.read`) |
-
-Studio uses the same SSE feed, and order's existing staff stream (`GET /api/v1/orders/events`) for
-orders as they arrive. The Chat tab uses support's existing inbox API.
-
-### 4.3 Quick listing (the core flow)
-
-Goal: under 60 seconds from capture to a buyable item, with the backend's share under 2 seconds.
+One Go module in this repository.
 
 ```
-Studio                       live                                   Dupli1 product
-  │ POST /captures (frame) ───▶ store frame, compute offset
-  │ ◀── capture id (+ matches, Phase 2)
-  │ POST /items/quick ────────▶ item = publishing, number = next_number   (1 transaction)
-  │                             ├─ new item:  create style ─────────────▶ masters
-  │                             │             create parent (status draft, price) ─▶ products
-  │                             │             create SKUs (color × size) ───────────▶ variants
-  │                             │             upload cropped image ─────────────────▶ images
-  │                             │             set stock (count, or ceiling) ────────▶ inventory
-  │                             ├─ matched item: link the existing product (no product writes)
-  │                             ├─ activate product (status active) ─────────────────▶ products
-  │                             └─ item = live; write live.item_published to outbox (1 transaction)
-  │ ◀── item                    outbox → NATS → every replica's SSE hub → viewers
+cmd/hglobal/main.go        # starts the HTTP server and the job runner (flags: --jobs, --http)
+internal/
+  platform/                # shared plumbing, no business rules
+    config/  db/  httpx/  auth/  sse/  jobs/  events/  storage/  ids/  clock/
+  account/                 # customers, staff, roles, sessions, addresses (incl. customs number)
+  catalog/                 # products, option values, variants, stock, product media, search
+  live/                    # shows, numbered show items, captures, YouTube, quick listing
+  checkout/                # cart, holds, checkout
+  order/                   # order lifecycle, inspection, customs, shipping, cancel/refund
+  payment/                 # provider adapter, payment records, webhooks, refunds
+  support/                 # 1:1 chat between a customer and staff
+  notify/                  # email, Telegram (ops), Kakao (later)
+migrations/                # SQL migrations, applied on startup
 ```
 
-- **Nothing half-made is visible.** The product is created as `draft` and set `active` as the last
-  product call. The item turns `live` after that.
-- **Each step is recorded on the item**, so `POST /items/{id}/retry` resumes where it stopped instead
-  of creating a second product. The `Idempotency-Key` stops a double click from listing twice.
-- **Errors are shown, not hidden.** If product is down, the item goes `failed` with the reason. The
-  console shows it, and the number stays taken (numbers are never reused).
-- `live` writes to product with its own **service account** (`dupli1-live`), so background jobs work
-  too. The staff member who pressed Publish is recorded on the item.
+Each module has the same small set of files: `model.go` (types and rules), `service.go` (use
+cases), `store.go` (the repository interface), `postgres.go` (its implementation), `http.go`
+(handlers), plus tests.
 
-### 4.4 Real-time feed to viewers
+Rules that keep the monolith tidy:
 
-Dupli1's admin order stream already solves this. `live` copies the pattern:
+1. **A module owns its tables.** Other modules call its service, never its tables directly.
+2. **Business rules live in `model.go` and `service.go`.** Handlers validate input and call the
+   service; `postgres.go` only reads and writes.
+3. **Cross-module work shares one transaction** through `platform/db.Tx` (unit of work). That is the
+   reason for building a monolith, so use it: quick listing and checkout are single transactions.
+4. **Modules announce changes as events** (`platform/events`): written to an `events` table in the
+   same transaction, delivered to in-process subscribers and the live feed after commit.
+5. **Every service is tested with an in-memory store**; Postgres tests run when `DATABASE_URL` is set.
 
-- **SSE, not WebSocket.** It goes through the BFF and nginx like any GET, and the browser
-  reconnects by itself.
-- State changes write an event row in the same transaction (transactional outbox,
-  `shared/pkg/outbox`). A drain worker publishes to NATS `live.*`. Every `live` replica holds a
-  broadcast subscription and relays to the streams it holds.
-- Each frame carries the **full item snapshot**, so clients never need a follow-up GET:
-  `event: item` / `data: {"type":"live.item_published","item":{…}}`.
+## 4. Product model: spontaneous listing
+
+### 4.1 What a product is
+
+| Entity | Fields | Notes |
+|---|---|---|
+| **Product** | `id`, `title`, `description`, `price_won`, `status`, `source`, `specs` (key/value), `tags`, `details_complete`, `created_by` | Only a **photo and a price** are required. `title` defaults to `Live #9` and can be edited later. `source` is `live_capture` or `manual`. |
+| **Option** | `product_id`, `name` (e.g. "Color", "Size"), `position` | Free text, per product. No master list. |
+| **Option value** | `option_id`, `label` (e.g. "Brown", "Mini"), `hex1`, `hex2` | `hex1` draws the swatch; `hex2` makes it two-tone (Ivory / Black). Both optional. |
+| **Variant** | `id`, `product_id`, option values, `price_override_won`, `stock_mode`, `stock_qty`, `held_qty`, `sold_qty`, `status` | One per sellable combination. A product with no options has one variant. |
+| **Media** | `product_id`, `kind` (`photo`, `inspection_photo`, `inspection_video`), `object_key`, `position` | The inspection photos and video on the product page are product media, uploaded before or at sale. |
+
+`status`: `draft` → `live` → `hidden` (after the stream's N days) → `archived`. `live` means
+buyable and visible.
+
+### 4.2 Keeping data consistent without masters
+
+- **Suggestions, not masters.** When the CS rep types a color or size, Studio suggests the labels
+  used most in the last 90 days (`GET /studio/catalog/suggestions?option=Color`). Picking one reuses
+  its label and swatch color, so "Brown" stays one spelling with one hex.
+- **Swatch colors are optional.** Without a hex, the swatch shows the label as a chip.
+- **Details later.** `details_complete` is false until a title, description and specs are filled in.
+  The after-stream list in Studio shows every product still missing them.
+
+### 4.3 Stock and holds
+
+```
+available = stock_qty − held_qty − sold_qty        (stock_mode = counted)
+available = unlimited until marked sold out          (stock_mode = until_sold_out)
+```
+
+- **Hold at Buy now (D4).** One conditional update takes the hold:
+  `UPDATE variants SET held_qty = held_qty + $n WHERE id = $1 AND stock_qty − held_qty − sold_qty >= $n`.
+  No row updated means sold out, so two buyers can never both get the last one.
+- Holds live 10 minutes and are released by a job, by abandoning checkout, or by converting into a
+  paid order (`held → sold`).
+- **Cancel before shipping returns the stock; cancel after shipping does not.**
+
+## 5. Live commerce (`live` module)
+
+### 5.1 Show and show item
+
+| Entity | Fields | Rules |
+|---|---|---|
+| **Show** | `id`, `youtube_video_id`, `title`, `scheduled_at`, `status` (`draft`, `scheduled`, `live`, `ended`), `started_at`, `ended_at`, `display_days_after`, `next_number`, `host_name`, `cs_user_id` | `started_at` comes from YouTube's actual start time when available. |
+| **Show item** | `id`, `show_id`, `number`, `source` (`preselected`, `captured`), `product_id`, `pinned`, `broadcast_offset_sec`, `capture_id`, `keep_listed`, `hide_at`, `published_at`, `published_by` | `number` is unique per show and **never reused or renumbered once the show is live**. |
+| **Capture** | `id`, `show_id`, `object_key`, `captured_at`, `broadcast_offset_sec`, `crop` | The raw frame. The cropped image becomes the product's first photo. |
+
+- Preselected items (No. 1–8) can be reordered until the show starts; starting locks all numbers.
+- A captured item takes `next_number` inside its publishing transaction.
+- Ending a show sets `hide_at = ended_at + display_days_after` on every item not `keep_listed`.
+
+### 5.2 Quick listing (the core flow)
+
+Target: under 60 seconds from capture to a buyable item; the server's share under 1 second.
+
+```
+Studio                                  hglobal
+  │ POST /studio/shows/{id}/captures ──▶ save frame to storage, compute broadcast offset
+  │ ◀── capture (+ match suggestions, Phase 2)
+  │ POST /studio/shows/{id}/items/quick (Idempotency-Key)
+  │      { capture_id, crop, price, title?, options[], stock }
+  │                                    ├─ save cropped photo to storage   (before the transaction)
+  │                                    └─ one transaction:
+  │                                         product (status live) + options + variants + stock
+  │                                         + media + show item (number = next_number)
+  │                                         + event live.item_published
+  │ ◀── item                           after commit → SSE hub → every viewer
+```
+
+- **All or nothing.** If anything fails, the transaction rolls back and nothing is visible; Studio
+  shows the error and the rep presses Publish again. A photo uploaded for a failed attempt is
+  removed by a cleanup job.
+- The `Idempotency-Key` makes a double click or a retry after a timeout return the same item.
+- **Matched item** (Phase 2): if the rep picks an existing product, no product is created. The show
+  item links to it, and the price can be changed in the same request.
+
+### 5.3 Live feed to viewers (SSE)
+
+- `GET /api/shows/{id}/events` is a Server-Sent Events stream. Each frame carries the **full item
+  snapshot**, so viewers never need a follow-up request:
+  `event: item` · `data: {"type":"live.item_published","item":{…}}`.
 - Event types: `live.show_started`, `live.show_ended`, `live.item_published`, `live.item_updated`
-  (price, name, photos, stock), `live.item_pinned`, `live.item_unpinned`, `live.item_sold_out`.
-  `live.item_failed` goes to NATS (for Studio and ops alerts) but is never sent to viewers.
-- `Last-Event-ID` replays from the event table, kept for 24 hours. Older than that, the server
-  tells the client to reload `/shows/{id}`.
-- Heartbeat every 15 s, so Cloudflare Tunnel and nginx keep the connection open. The nginx location
-  needs `proxy_buffering off` and a long read timeout.
-- **Stock**: product publishes no stock events today. For MVP, `live` polls availability for the
-  items of live shows every 3 s with the batch lookup `GET /api/v1/products/variants?sku_ids=`
-  (≤ 50 per call) and emits `live.item_updated` only when a number changes. Later, a
-  `product.stock_changed` event in Dupli1 can replace the poll.
+  (price, title, photos), `live.item_pinned`, `live.item_unpinned`, `live.stock_changed`,
+  `live.item_sold_out`.
+- **Stock changes are pushed, not polled.** Holds, orders and cancels happen in the same process, so
+  `catalog` publishes `stock_changed` whenever a variant on a live show changes, and the hub forwards
+  it. Repeated changes to one variant are merged into one frame per second.
+- `Last-Event-ID` replays from the `events` table (kept 24 h). Older than that, the server tells the
+  client to reload `GET /api/shows/{id}`.
+- Heartbeat every 15 s; the reverse proxy must not buffer `text/event-stream`.
+- **One instance is enough** for the expected 1–2k viewers. If a second instance is ever needed,
+  the hub fans out through PostgreSQL `LISTEN/NOTIFY`, so no message broker is required.
+- `GET /api/shows/{id}` is served from an in-memory snapshot of each live show, kept current by the
+  same events, so a burst of page loads when the host says "No. 5" does not hit the database.
 
-### 4.5 YouTube
+### 5.4 YouTube
 
-- YouTube Data API v3, `videos.list?part=liveStreamingDetails,snippet`. It returns the actual start
-  time and the concurrent viewer count. Polled every 30 s during a live show (about 360 quota units
-  for a 3-hour stream; the daily default is 10,000).
+- YouTube Data API v3, `videos.list?part=liveStreamingDetails,snippet`: actual start time and
+  concurrent viewers, polled every 30 s while a show is live (about 360 quota units for a 3-hour
+  stream; the default daily quota is 10,000).
 - Broadcast offset = capture time − actual start time − stream delay (a setting, default 10 s).
-- Needs an API key for `www.googleapis.com`, stored as a secret, never in the repo.
-- If the API is unreachable, the offset uses the Start press time and viewer count is hidden.
-  Listing never waits on YouTube.
+  Replay link: `youtube.com/watch?v={id}&t={offset}s`.
+- API key stored as a secret, not in the repo. If YouTube is unreachable, the offset uses the Start
+  press and the viewer count is hidden. Listing never waits on YouTube.
 
-### 4.6 After the stream
+### 5.5 After the stream
 
-- **Hide worker** (every minute): items whose `hide_at` has passed and that are not `keep_listed`
-  are set to `archived` in product, then `hidden` in `live`. This is idempotent and safe to re-run.
-  Archived, not deleted: past orders and links keep working.
-- **Recap**: `/shows/{id}/recap` is public once the show ends. The Studio "After the stream" screen
-  gives a share link and image for the KakaoTalk post. Sending through the Kakao API is Phase 3.
-- **Completion list**: items still missing a description or real name. Editing them updates the
-  product through `live` (or the Dupli1 product form directly).
+- **Auto-hide job** (every minute): products whose show items passed `hide_at` and are not
+  `keep_listed` move to `hidden`. Hidden products disappear from the site but keep their page for
+  past orders and links.
+- **Recap**: `GET /api/shows/{id}/recap` lists every item with its replay moment. Studio gives a
+  share link and image for the KakaoTalk post. Sending through the Kakao API is Phase 3.
+- **Completion list**: products from the stream with `details_complete = false`.
 
-### 4.7 Data (PostgreSQL `live`)
+## 6. Orders, payment, customs
 
-| Table | Key columns |
-|---|---|
-| `shows` | `id`, `youtube_video_id`, `title`, `status`, `scheduled_at`, `started_at`, `ended_at`, `display_days_after`, `next_number` |
-| `show_items` | `id`, `show_id`, `number` (unique with `show_id`), `source`, `product_id`, `sku_ids`, `pinned`, `state`, `last_error`, `publish_steps` (JSONB), `stock_mode`, `keep_listed`, `broadcast_offset_sec`, `hide_at`, `published_at`, `published_by`, `idempotency_key` |
-| `captures` | `id`, `show_id`, `object_key`, `captured_at`, `broadcast_offset_sec`, `crop` |
-| `live_events` | `id` (monotonic), `show_id`, `type`, `payload`, `created_at`, `published_at` — outbox and replay log |
-| `image_embeddings` (Phase 2) | `product_id`, `sku_id`, `image_url`, `embedding` (pgvector) |
+### 6.1 Order lifecycle
 
-Schema is migrated inline on startup, as every Dupli1 service does.
+The meeting's flow (order → inspection → customs number → shipping) becomes the status machine:
 
-## 5. Changes needed in the `dupli1` repo
+```
+pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_check ──▶ shipped ──▶ delivered ──▶ completed
+      │                    │            │               │
+      └── 10 min unpaid ───┴── cancel (refund, stock returned) ──┘        cancel after shipping:
+                                                                          refund, stock not returned
+```
 
-Small and additive. None of them change behavior for Dupli1's own storefront.
+- **inspecting**: staff attach inspection photos/video for this order. The customer sees them in the
+  order and on the product page if they are product media.
+- **customs_check**: the order's customs number (PCCC) is checked before shipping. MVP: format check
+  (`P` + 12 digits) plus a staff confirmation. Later: Korea Customs (UNI-PASS) lookup, once API
+  access is confirmed.
+- **shipped** requires a carrier and tracking number.
+- Every change is an event: Telegram alerts for staff, email (later Kakao) to the customer, and a
+  live update in Studio.
 
-| Change | Where |
-|---|---|
-| `live/` service module, Compose service, VENUS deploy entry | new directory, `docker-compose.yml`, `deploy/venus/` |
-| Gateway route `/api/v1/live/` with an SSE-friendly location | `api/gateway/routes.conf` + each wrapper's `$gw_live` upstream |
-| Permissions `live.show.read`, `live.show.manage`, `live.item.publish`; bundle `live_cs` = those + `support.read`, `support.reply`, `order.read.all` | `shared/pkg/permissions` |
-| Service account `dupli1-live` (`product.create`, `product.update`, `product.variant.create`, `product.variant.update`, `product.image.upload`, `product.master.write`, `inventory.stock.write`), API key from `DUPLI1_LIVE_SERVICE_API_KEY` | `shared/pkg/serviceaccount`, auth seeding |
-| Event subjects `live.*` and payload structs | `shared/pkg/events` |
-| `notification` subscribes `live.item_failed` and `live.show_started` (new alert class `alert_live`) | `notification` |
-| Placeholder brand `HGL` | data, through the master API (no code) |
-| Later: `product.stock_changed` event; hold stock at "Buy now" (D7); product-level inspection media (6.8) | `product`, `order` |
+### 6.2 Checkout
 
-## 6. Details and open points
+1. **Buy now** (or checkout from cart) takes holds (4.3) and opens a checkout that expires with them.
+2. The customer confirms the address and customs number (saved in their account for next time).
+3. **Pay** creates the order `pending_payment` and a payment with the provider. The price is always
+   recomputed on the server; the client never sends a total.
+4. The provider's webhook marks the payment succeeded. The order becomes `paid` and holds become sold
+   in one transaction. Webhooks are verified, idempotent, and reconciled by a job that asks the
+   provider about anything still pending.
+5. Virtual-account orders stay `pending_payment` until the deposit webhook arrives. They get a longer
+   deadline (e.g. 24 h) while still holding stock, which needs a decision for one-of-a-kind items.
 
-1. **Load.** Expect 1–2k viewers on SSE during a stream. One Go process holds that easily. The
-   public show read is served from an in-memory snapshot per live show, updated by its own events,
-   so a burst of page loads does not hit Postgres or product.
-2. **Security.** Public reads and SSE are rate-limited per IP. Capture uploads: images only, 5 MB
-   maximum. Every Studio route checks permissions, and staff IDs are recorded on writes.
-3. **Prices.** `live` sends the price to product and never computes totals. Order prices checkout
-   server-side, as today.
-4. **Matched items** (Phase 2) link an existing product. Changing the price on air changes the
-   catalog price. Decide whether that is wanted or whether a stream price needs its own override.
-5. **Observability.** `sentrymon` like every service, plus a log line per listing with the
-   capture-to-live time, so the 60-second goal can be measured.
-6. **Tests.** Service-layer unit tests with in-memory fakes for product, YouTube and storage;
-   Postgres tests run when `POSTGRES_URL` is set; a smoke script that creates a show, quick-lists an
-   item and buys it through the existing money path (`scripts/smoke-money-path.sh`).
-7. **Promoting a live item to the real catalog.** Because SKU codes are fixed, filing a stream item
-   under its real brand means creating a proper product and archiving the placeholder one, with the
-   live item pointing to the new product. Confirm whether brand can change on an existing product
-   before building this. It is Phase 2.
-8. **Customs and inspection.** PCCC (`P` + 12 digits) is already on Dupli1 addresses and checkout,
-   checked for format only. The Figma "Verified" state needs a real check: Korea Customs (UNI-PASS)
-   offers a PCCC lookup, but API access has to be confirmed. Product-page inspection media before
-   sale does not exist yet. The simplest version is a tagged image group on the product.
-9. **Image matching** (Phase 2). An image embedding for every catalog photo, stored with pgvector,
-   with nearest neighbours for each capture. Hosting the model on VENUS versus calling an external
-   API is open. `live` already has the `ImageMatcher` port with a no-op adapter in MVP, so the flow
-   does not change when it arrives.
+### 6.3 Payment module
 
-## 7. Phases
+- One `Provider` interface (`CreatePayment`, `VerifyWebhook`, `Refund`, `Lookup`) with one adapter
+  for the chosen PG (D2) and a fake adapter for development and tests.
+- Payments and refunds are stored with the provider's IDs; amounts are whole won.
+- Refunds go through the provider first; the order changes only after the provider accepts.
 
-| Phase | Backend scope | Depends on |
+## 7. Accounts, chat, notifications
+
+- **account**: customers (Kakao / email sign-in), staff (roles `owner`, `manager`, `cs`), saved
+  addresses with an optional customs number. Sessions are HttpOnly cookies held by the server, not
+  tokens in the browser. Staff and customers use separate cookies and sign-in pages.
+- **Roles** decide Studio access: `cs` can run the live console, list items, answer chat and move
+  orders through inspection; `manager` adds refunds, stream setup and settings; `owner` adds staff
+  management.
+- **support**: one conversation per customer, messages with optional product or order references,
+  SSE to both sides. Replaces KakaoTalk for 1:1 questions. The Studio Chat tab is its inbox.
+- **notify**: Telegram alerts for staff (new order, paid, listing failed, stream started), email to
+  customers (order paid, shipped, chat reply). Kakao messages are Phase 3.
+
+## 8. API outline
+
+Storefront under `/api/`, Studio under `/api/studio/` (staff session required).
+
+| Area | Storefront | Studio |
 |---|---|---|
-| **0 — Decide** (with the 11/08 design review) | Answer D1–D7. Agree this plan. | — |
-| **1 — MVP** (about 4–6 weeks) | `live` service: shows (create, start, end), preselected No. 1–8, capture upload, quick listing of **new** items, pin, sold out, edit, retry; public show read + SSE; YouTube start time and replay links; hide worker. Dupli1 changes in section 5. H-Global deployment of Dupli1 (D1). | D1, D2, D3, D4 |
-| **2 — Match and follow up** (about 3–4 weeks) | Image matching for existing products; recap page and KakaoTalk share link; completion list; console stats (orders and revenue per show); viewer count; promote-to-catalog (6.7). | Phase 1 |
-| **3 — Later** | Stock hold at "Buy now"; `product.stock_changed` event; stream reminders; Kakao API sending; YouTube chat; per-item analytics; PCCC verification; product-level inspection media. | — |
+| Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick`, `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
+| Catalog | `GET /products`, `GET /products/{id}` (incl. broadcasts and inspection media) | `PATCH /products/{id}`, options, variants, stock, media upload, `GET /catalog/suggestions`, `GET /catalog/incomplete` |
+| Checkout | `GET/PUT /cart`, `POST /checkout` (Buy now / from cart, takes holds), `POST /checkout/{id}/pay` | — |
+| Orders | `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel` | `GET /orders`, `POST /orders/{id}/inspection`, `/customs-check`, `/ship`, `/deliver`, `/refund`, `GET /orders/events` (SSE) |
+| Payment | `POST /payments/webhook/{provider}` (provider only) | `GET /payments`, refunds via orders |
+| Account | `POST /auth/kakao`, `/auth/email`, `GET/PUT /me`, addresses | `POST /studio/auth/login`, staff management |
+| Support | `GET/POST /support/messages`, `GET /support/events` (SSE) | `GET /support/conversations`, reply, close, `GET /support/events` (SSE) |
+
+## 9. Data (one PostgreSQL database)
+
+| Module | Tables |
+|---|---|
+| account | `customers`, `staff`, `sessions`, `addresses` |
+| catalog | `products`, `product_options`, `option_values`, `variants`, `product_media` |
+| live | `shows`, `show_items`, `captures` |
+| checkout | `carts`, `cart_lines`, `checkouts`, `holds` |
+| order | `orders`, `order_lines` (snapshot of title, options, price, photo), `order_events`, `shipments` |
+| payment | `payments`, `refunds`, `webhook_receipts` |
+| support | `conversations`, `messages` |
+| platform | `events` (event log + SSE replay), `jobs`, `idempotency_keys` |
+| Phase 2 | `image_embeddings` (pgvector) |
+
+Migrations are plain SQL files in `migrations/`, applied in order on startup and tracked in a
+`schema_migrations` table.
+
+## 10. Non-functional
+
+- **Load**: one process, 1–2k SSE connections, a few hundred requests per second at peaks. Live show
+  reads come from memory; holds are single-row conditional updates.
+- **Security**: staff routes need a staff session and role; public reads and SSE are rate-limited
+  per IP; uploads accept images (5 MB) and videos (100 MB) only; payment webhooks are signature-checked.
+- **Money**: whole won in integers, recomputed on the server, never trusted from the client.
+- **Observability**: structured logs, error reporting (e.g. Sentry), and a log line per listing with
+  capture-to-live time so the 60-second goal can be measured.
+- **Backups**: nightly database dump and storage sync off the machine, with a tested restore.
+- **Testing**: service tests with in-memory stores; Postgres tests in CI; one end-to-end test that
+  creates a show, quick-lists an item, buys it with the fake provider and ships it.
+
+## 11. Phases
+
+| Phase | Scope |
+|---|---|
+| **0 — Decide** (with the 11/08 design review) | Answer D1–D7. Agree this plan. |
+| **1 — MVP** (about 5–7 weeks) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock and media. Live: shows, preselected No. 1–8, capture, quick listing, pin, sold out, SSE feed, YouTube offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. |
+| **2 — Match and follow up** (about 3–4 weeks) | Image matching to existing products (pgvector); recap page and KakaoTalk share link; completion list; console stats per show; 1:1 chat; inspection media on the product page. |
+| **3 — Later** | Kakao login if not in MVP, Kakao messages, stream reminders, YouTube chat, customs number lookup, reviews, analytics per item. |
 
 Suggested build order inside Phase 1:
 
-1. Skeleton `live` service, Postgres schema, in-memory fakes, gateway route, permissions, service account.
-2. Shows and preselected items (Studio setup screen works end to end).
-3. Captures and quick listing for new items, with retry and idempotency.
-4. Outbox → NATS → SSE hub; public show read; stock poll.
-5. YouTube adapter; broadcast offsets; `/products/{id}/broadcasts`.
-6. Hide worker; end-of-show; smoke test through checkout and payment.
+1. Platform skeleton, migrations, staff sign-in, roles.
+2. Catalog: products, options, variants, stock, media upload.
+3. Live: shows, preselected items, captures, quick listing in one transaction.
+4. Events, SSE hub, in-memory show snapshot, stock-change push.
+5. Checkout and holds; orders; payment provider adapter and webhook; hold and unpaid-order jobs.
+6. YouTube adapter, auto-hide job, Telegram and email; end-to-end test.
 
-## 8. Design follow-ups from this plan
+## 12. Design follow-ups
 
-- Checkout: Korean address and the PCCC field (if D2 confirms buyers are in Korea). The hold timer
-  belongs on the pay step and lasts 5 minutes under D7's MVP rule.
-- Components: two-tone swatches come from the SKU's second color (`color2Code`), not from two values
-  in the master catalog.
-- Card payments may carry Dupli1's card surcharge. If H-Global keeps it, checkout should show it.
+- **Checkout**: if D1 confirms buyers are in Korea, use a Korean address and keep the customs
+  number field. The 10-minute hold timer already matches D4.
+- **Quick listing**: the Color and Size chips should come from recently used labels with a "+ Add"
+  for new ones (4.2). Hex is optional, and two-tone uses two hex values on one option value, which
+  matches the components board.
+- **Stock**: the "Unknown — sell until marked sold out" toggle matches stock mode `until_sold_out`.
