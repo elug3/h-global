@@ -654,7 +654,9 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 
 ### 7.1 Customer sign-in: email now, Kakao and phone later (D3)
 
-**Now:** email and password only (built: `/api/auth/register`, `/api/auth/login`). **Later**
+**Now:** email and password only (built: `/api/auth/register`, `/api/auth/login`). Sending email
+(SMTP) is deferred too (2026-11-07), so there is no password reset or email verification yet;
+until then a customer who forgets their password contacts staff. **Later**
 (on hold, 2026-11-07): Kakao and phone, designed below so adding them does not change existing
 accounts.
 
