@@ -49,6 +49,11 @@ type Show struct {
 	HostName         string     `json:"host_name"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	// IngestStartedAt is when the broadcast relay first received the stream.
+	// YouTube's timeline starts at about the same moment, so relay frames are
+	// placed on it relative to this time.
+	IngestStartedAt  *time.Time `json:"ingest_started_at"`
+	IngestKeyVersion int        `json:"-"`
 }
 
 // WatchURL is the stream's YouTube page.

@@ -27,6 +27,8 @@ jobs:
       HG_TEST_DATABASE_URL: postgres://hglobal:hglobal_dev@localhost:5432/hglobal_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+      - name: Install ffmpeg (broadcast relay tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - uses: actions/setup-go@v5
         with:
           go-version-file: hg-server/go.mod

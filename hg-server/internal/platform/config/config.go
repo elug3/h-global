@@ -29,6 +29,22 @@ type Config struct {
 	PaymentProvider    string        // HG_PAYMENT_PROVIDER: "fake" until a real provider is chosen
 	FakePaymentSecret  string        // HG_FAKE_PAYMENT_SECRET
 	DevRoutes          bool          // HG_DEV_ROUTES: enables /api/dev/* (fake payment approval)
+
+	Relay Relay
+}
+
+// Relay configures the broadcast relay (plan 5.5): an ffmpeg process that
+// receives the show's SRT stream, copies it to YouTube and taps frames.
+type Relay struct {
+	Enabled       bool   // HG_RELAY_ENABLED
+	Listen        string // HG_RELAY_LISTEN: SRT listen address, host:port
+	PublicHost    string // HG_RELAY_PUBLIC_HOST: host:port the broadcaster connects to
+	Secret        string // HG_RELAY_SECRET: derives per-show ingest keys (required when enabled)
+	YouTubeURL    string // HG_YOUTUBE_RTMP_URL: ingest base URL
+	YouTubeKey    string // HG_YOUTUBE_STREAM_KEY: empty = do not push to YouTube
+	FFmpeg        string // HG_FFMPEG: ffmpeg binary
+	LatencyMillis int    // HG_RELAY_SRT_LATENCY_MS: SRT receive buffer for lost packets
+	LocalCopy     string // HG_RELAY_LOCAL_COPY: local UDP host:port between ingest and the YouTube pusher
 }
 
 // Load reads the environment.
@@ -84,6 +100,9 @@ func Load() (Config, error) {
 		return c, err
 	}
 	c.BcryptCost = int(cost)
+	if c.Relay, err = loadRelay(); err != nil {
+		return c, err
+	}
 	if c.PaymentProvider != "fake" {
 		return c, fmt.Errorf("HG_PAYMENT_PROVIDER %q is not supported yet (only \"fake\")", c.PaymentProvider)
 	}
@@ -131,4 +150,29 @@ func envInt64(name string, def int64) (int64, error) {
 		return 0, fmt.Errorf("%s: %w", name, err)
 	}
 	return n, nil
+}
+
+func loadRelay() (Relay, error) {
+	r := Relay{
+		Listen:     env("HG_RELAY_LISTEN", "0.0.0.0:9000"),
+		PublicHost: env("HG_RELAY_PUBLIC_HOST", "localhost:9000"),
+		Secret:     os.Getenv("HG_RELAY_SECRET"),
+		YouTubeURL: strings.TrimRight(env("HG_YOUTUBE_RTMP_URL", "rtmps://a.rtmp.youtube.com/live2"), "/"),
+		YouTubeKey: os.Getenv("HG_YOUTUBE_STREAM_KEY"),
+		FFmpeg:     env("HG_FFMPEG", "ffmpeg"),
+		LocalCopy:  env("HG_RELAY_LOCAL_COPY", "127.0.0.1:19400"),
+	}
+	var err error
+	if r.Enabled, err = envBool("HG_RELAY_ENABLED", false); err != nil {
+		return r, err
+	}
+	ms, err := envInt64("HG_RELAY_SRT_LATENCY_MS", 300)
+	if err != nil {
+		return r, err
+	}
+	r.LatencyMillis = int(ms)
+	if r.Enabled && len(r.Secret) < 16 {
+		return r, fmt.Errorf("HG_RELAY_SECRET must be at least 16 characters when the relay is enabled")
+	}
+	return r, nil
 }

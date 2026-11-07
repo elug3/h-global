@@ -14,12 +14,12 @@ import (
 type Postgres struct{ DB *db.DB }
 
 const showCols = `id, title, youtube_video_id, status, scheduled_at, started_at, ended_at,
-	display_days_after, next_number, host_name, created_at, updated_at`
+	display_days_after, next_number, host_name, created_at, updated_at, ingest_key_version, ingest_started_at`
 
 func scanShow(row pgx.Row) (Show, error) {
 	var s Show
 	err := row.Scan(&s.ID, &s.Title, &s.YouTubeVideoID, &s.Status, &s.ScheduledAt, &s.StartedAt, &s.EndedAt,
-		&s.DisplayDaysAfter, &s.NextNumber, &s.HostName, &s.CreatedAt, &s.UpdatedAt)
+		&s.DisplayDaysAfter, &s.NextNumber, &s.HostName, &s.CreatedAt, &s.UpdatedAt, &s.IngestKeyVersion, &s.IngestStartedAt)
 	if db.IsNoRows(err) {
 		return s, apperr.NotFound("show")
 	}

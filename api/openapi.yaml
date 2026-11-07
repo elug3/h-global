@@ -32,6 +32,7 @@ tags:
 - name: studio-auth
 - name: studio-catalog
 - name: studio-live
+- name: studio-relay
 - name: studio-orders
 - name: hooks
 - name: dev
@@ -1381,6 +1382,233 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/ingest:
+    get:
+      tags:
+      - studio-relay
+      summary: 'Ingest URL and passphrase for OBS. Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingest'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 relay_disabled when HG_RELAY_ENABLED is false.
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/ingest/rotate:
+    post:
+      tags:
+      - studio-relay
+      summary: 'Replace the ingest passphrase. Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingest'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: A live relay restarts with the new passphrase; the broadcaster must reconnect.
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/relay:
+    get:
+      tags:
+      - studio-relay
+      summary: 'Relay status. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStatus'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/frames:
+    get:
+      tags:
+      - studio-relay
+      summary: 'Recent frames from the ring buffer (last 120 s). Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FrameInfo'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 no_frames before the relay has received the show's stream.
+      security:
+      - staffSession: []
+      parameters:
+      - name: after_seq
+        in: query
+        schema:
+          type: integer
+          format: int64
+        description: Frames after this one; omit for the newest.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/frames/{seq}:
+    get:
+      tags:
+      - studio-relay
+      summary: 'One buffered frame. Role: cs or higher.'
+      responses:
+        '200':
+          description: The frame
+          content:
+            image/jpeg: {}
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: seq
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  /studio-api/shows/{id}/preview:
+    get:
+      tags:
+      - studio-relay
+      summary: 'Live preview as MJPEG. Role: cs or higher.'
+      responses:
+        '200':
+          description: multipart/x-mixed-replace stream of JPEG frames; show it in an <img> element.
+          content:
+            multipart/x-mixed-replace:
+              schema:
+                type: string
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/captures/relay:
+    post:
+      tags:
+      - studio-relay
+      summary: 'Keep a buffered frame as a capture. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capture'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: The capture's broadcast_offset_sec is the frame's place in the stream.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seq:
+                  type: integer
+                  format: int64
+              required:
+              - seq
     parameters:
     - name: id
       in: path
@@ -3079,6 +3307,76 @@ components:
           - integer
           - 'null'
         replay_url:
+          type: string
+    Ingest:
+      type: object
+      properties:
+        url:
+          type: string
+          description: Full SRT URL with passphrase; paste into OBS as Server.
+        host:
+          type: string
+        passphrase:
+          type: string
+        latency_ms:
+          type: integer
+        note:
+          type: string
+    RelayStatus:
+      type: object
+      properties:
+        show_id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        listening:
+          type: boolean
+          description: ffmpeg is waiting for or receiving the broadcast.
+        receiving:
+          type: boolean
+          description: A frame arrived in the last 3 seconds.
+        ingest_started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        last_frame_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        frames_buffered:
+          type: integer
+        sessions:
+          type: integer
+          description: Broadcaster connections so far.
+        youtube_push:
+          type: boolean
+          description: A YouTube stream key is configured.
+        push_running:
+          type: boolean
+        push_restarts:
+          type: integer
+        push_last_error:
+          type: string
+        last_error:
+          type: string
+    FrameInfo:
+      type: object
+      properties:
+        seq:
+          type: integer
+          format: int64
+        at:
+          type: string
+          format: date-time
+        offset_sec:
+          type:
+          - integer
+          - 'null'
+          description: Place in the stream, from ingest start.
+        url:
           type: string
     Shipping:
       type: object

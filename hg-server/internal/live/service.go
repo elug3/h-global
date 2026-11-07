@@ -519,6 +519,77 @@ func (s *Service) SaveCapture(ctx context.Context, showID, staffID uuid.UUID, da
 	return s.Capture(ctx, c.ID)
 }
 
+// Show returns a show.
+func (s *Service) Show(ctx context.Context, id uuid.UUID) (Show, error) {
+	return s.Store.show(ctx, id, false)
+}
+
+// LiveShow returns the show that is live now, if any.
+func (s *Service) LiveShow(ctx context.Context) (*Show, error) {
+	list, err := s.Store.shows(ctx, `WHERE status = 'live' LIMIT 1`)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return &list[0], nil
+}
+
+// MarkIngestStarted records when the relay first received a show's stream.
+// Later calls keep the first time.
+func (s *Service) MarkIngestStarted(ctx context.Context, showID uuid.UUID, at time.Time) error {
+	_, err := s.DB.Q(ctx).Exec(ctx,
+		`UPDATE shows SET ingest_started_at = $2 WHERE id = $1 AND ingest_started_at IS NULL`, showID, at)
+	return err
+}
+
+// RotateIngestKey invalidates a show's ingest key by bumping its version.
+func (s *Service) RotateIngestKey(ctx context.Context, showID uuid.UUID) (Show, error) {
+	tag, err := s.DB.Q(ctx).Exec(ctx,
+		`UPDATE shows SET ingest_key_version = ingest_key_version + 1, updated_at = now() WHERE id = $1`, showID)
+	if err != nil {
+		return Show{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Show{}, apperr.NotFound("show")
+	}
+	return s.Store.show(ctx, showID, false)
+}
+
+// SaveRelayCapture keeps a frame from the broadcast relay as a capture. The
+// frame's place in the stream is its arrival time minus the time the relay
+// first received the stream (no stream delay: relay frames arrive before
+// YouTube shows them).
+func (s *Service) SaveRelayCapture(ctx context.Context, showID, staffID uuid.UUID, jpeg []byte, at time.Time) (Capture, error) {
+	sh, err := s.Store.show(ctx, showID, false)
+	if err != nil {
+		return Capture{}, err
+	}
+	if sh.Status != ShowLive {
+		return Capture{}, apperr.Conflict("show_not_live", "frames can be captured while the show is live")
+	}
+	f, err := upload.StoreOriginalImage(ctx, s.Storage, storage.CapturePrefix, jpeg)
+	if err != nil {
+		return Capture{}, err
+	}
+	var offset *int
+	if start := sh.IngestStartedAt; start != nil || sh.StartedAt != nil {
+		if start == nil {
+			start = sh.StartedAt
+		}
+		sec := int(at.Sub(*start) / time.Second)
+		if sec < 0 {
+			sec = 0
+		}
+		offset = &sec
+	}
+	c := Capture{ID: ids.New(), ShowID: showID, ObjectKey: f.Key, ContentType: f.ContentType,
+		Width: f.Width, Height: f.Height, BroadcastOffsetSec: offset, Source: "relay", CreatedBy: &staffID}
+	if err := s.Store.insertCapture(ctx, c); err != nil {
+		_ = s.Storage.Delete(context.WithoutCancel(ctx), f.Key)
+		return Capture{}, err
+	}
+	return s.Capture(ctx, c.ID)
+}
+
 // Capture returns a capture.
 func (s *Service) Capture(ctx context.Context, id uuid.UUID) (Capture, error) {
 	c, err := s.Store.capture(ctx, id)
