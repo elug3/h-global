@@ -349,25 +349,139 @@ pricing (D7).
 
 ### 5.7 Agent listing (optional, Phase 2)
 
-With frames arriving before YouTube, an agent can prepare listings while the host is still talking:
+With frames arriving before YouTube, an agent can prepare listings while the host is still talking.
+**The agent never creates a product.** It creates a **listing proposal**, a record only staff can see
+in hg-studio. A product exists only after a CS rep presses Publish (D10).
 
-1. **Watch.** hg-server sends sampled frames that changed (frames that barely differ are skipped)
-   to a small, cheap vision model, which answers "is a new product being shown, and where is it?".
-2. **Prepare.** When it says yes, a stronger model gets 3–4 sharp frames from the ring buffer, the
-   last minute of transcript, and similar existing products. It returns a **listing proposal**:
-   title, crop, colors with swatch colors, sizes, price, and new-or-existing.
-3. **Approve.** The proposal appears in hg-studio's quick-listing panel, already filled in. The CS
-   rep checks the price and presses Publish. That is the same quick-listing transaction as 5.2, so
-   the agent never publishes on its own (D10).
+#### Flow
+
+1. **Detected.** hg-server sends sampled frames that changed (frames that barely differ are
+   skipped) to a small, cheap vision model, which answers "is a new product being shown, and
+   where?". On a yes, hg-server creates a proposal in `detected` with that frame's stream timestamp.
+   hg-studio shows a placeholder card ("Product spotted at 00:42:10…").
+2. **Drafting.** hg-server collects 3–4 sharp frames around that moment from the ring buffer, the
+   last minute of transcript, and similar existing products (image matching). A stronger model fills
+   in the proposal's fields.
+3. **Ready.** The filled-in card appears in hg-studio's quick-listing panel. Fields the agent was
+   unsure of are highlighted, and empty fields must be filled in by the rep.
+4. **Published or dismissed.** The rep corrects what is wrong and presses **Publish**. That runs
+   the normal quick-listing transaction (5.2) with the proposal's ID, and the proposal records the
+   item it became. **Dismiss** records a reason (`not_a_product`, `duplicate`, `wrong_item`, `other`).
+
+#### States
+
+```
+detected ──▶ drafting ──▶ ready ──┬──▶ published   (CS rep pressed Publish)
+    │            │                ├──▶ dismissed   (CS rep dismissed, with a reason)
+    │            └──▶ failed      └──▶ expired     (no action within the time limit)
+    └──────────────▶ merged        (same product as an open proposal or a live item)
+```
+
+- `failed`: the model call failed or returned an unusable answer. The card offers **Retry** and
+  **List manually**, which opens the normal quick-listing form with the frames already attached.
+- `expired`: not acted on within 10 minutes (a setting) or by the end of the stream. The record is
+  kept for measurement.
+- `merged`: see "No duplicates" below.
+- A proposal moves to `published` only inside the quick-listing transaction, so it can be published
+  once at most. A second Publish returns the item already created.
+
+#### What a proposal holds
+
+```json
+{
+  "id": "prop_01J…",
+  "show_id": "show_01J…",
+  "status": "ready",
+  "detected_at_ms": 2530400,
+  "evidence": {
+    "frames": ["cap_…a", "cap_…b", "cap_…c"],
+    "best_frame": "cap_…b",
+    "crop": { "x": 412, "y": 160, "w": 520, "h": 610 },
+    "transcript": { "from_ms": 2471000, "to_ms": 2531000, "text": "…이 가방 십사만구천원…" }
+  },
+  "kind": "new",
+  "match": null,
+  "fields": {
+    "title":   { "value": "Woven shoulder bag", "confidence": "high" },
+    "price":   { "value": 149000, "heard": "십사만구천원", "confidence": "medium" },
+    "options": [
+      { "name": "Color", "values": [ { "label": "Brown", "hex1": "#4a3f35" } ], "confidence": "high" },
+      { "name": "Size",  "values": [], "confidence": "none" }
+    ],
+    "stock":   { "mode": "until_sold_out", "confidence": "low" }
+  },
+  "models": { "watcher": "…", "drafter": "…", "cost_won": 92 },
+  "published_item_id": null,
+  "dismiss_reason": null,
+  "merged_into": null
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `evidence` | Why the agent proposed what it did: full-resolution frames from the relay buffer (stored as captures), the crop for the product photo, and the transcript excerpt with its stream times. |
+| `kind` | `new` (create a product), `existing_product` (a catalog product matched; Publish adds it to the stream without creating a product, and the price can still be changed), or `already_in_show` (this stream already has it as an item). |
+| `match` | For `existing_product` / `already_in_show`: the product and show item, with the match score. |
+| `fields.*.confidence` | `high`, `medium`, `low` or `none`. hg-studio highlights `low` and `medium`; `none` leaves the field empty and the rep must fill it in. |
+| `fields.price.heard` | The words the price came from, so the rep can check it at a glance. The price is the field most likely to be costly if wrong. |
+| `models` | Which models drafted it and what it cost, so cost per listing can be tracked. |
+
+#### No duplicates
+
+The host often shows the same bag several times, or comes back to it later. Before creating a
+proposal, hg-server compares the new detection with:
+
+- **open proposals in this show**: the same product within a few minutes is merged into the
+  existing proposal (its frames and transcript are added). The new detection is stored as `merged`
+  with `merged_into`.
+- **live items in this show**: a match becomes `already_in_show`. The card says "No. 9 is being
+  shown again" and offers **Pin as worn or held today** instead of Publish.
+
+#### Approval rules (D10)
+
+- Only staff with the `cs` role or above can publish or dismiss a proposal.
+- The agent cannot call Publish. There is no path from a proposal to a live product that skips a
+  person.
+- Publishing records both `published_by` (the rep) and the proposal ID on the item, so every listing
+  can be traced back to its evidence.
+
+#### Studio updates in real time
+
+hg-studio's staff SSE stream (`/studio-api/shows/{id}/events`) carries `proposal.detected`,
+`proposal.ready`, `proposal.failed`, `proposal.merged`, `proposal.published`, `proposal.dismissed`
+and `proposal.expired`. Each event carries the full proposal. When two reps watch the console, a
+proposal one of them publishes disappears from the other's queue at once.
+
+#### Measuring accuracy
+
+Every proposal is kept with its outcome, so hg-studio can report per stream:
+
+- the share of proposals published versus dismissed (and why);
+- per field, how often the rep changed the agent's value. Price matters most;
+- time from detection to `ready`, and from `ready` to published;
+- model cost per published item.
+
+This is the evidence for any later decision to let the agent publish some items alone (for
+example, matched existing products with a high price confidence).
+
+#### Cost and timing
 
 - Estimated model cost: **about $5–10 per 3-hour stream** with about 40 listings (cheap watcher
   plus a stronger model per listing), before speech-to-text. To be confirmed with a pilot on a
   recorded stream.
-- **Timing.** A proposal can be ready before YouTube viewers even see the product. Publishing at
-  that moment is fine (the item appears as the host starts talking about it), but the console
-  shows the YouTube delay so the CS rep knows what viewers currently see.
-- New table: `listing_proposals` (`show_id`, frames, transcript excerpt, proposed fields,
-  `status`: `pending` / `published` / `dismissed`, `published_item_id`), kept to measure accuracy.
+- A proposal can be ready before YouTube viewers even see the product. Publishing at that moment is
+  fine (the item appears as the host starts talking about it), but the console shows the YouTube
+  delay so the CS rep knows what viewers currently see.
+
+#### Data and API
+
+- Table `listing_proposals`: `id`, `show_id`, `status`, `detected_at_ms`, `evidence` (JSONB, capture
+  IDs), `kind`, `match` (JSONB), `fields` (JSONB), `models` (JSONB), `published_item_id`,
+  `dismiss_reason`, `merged_into`, `decided_by`, `created_at`, `decided_at`.
+- `GET /studio-api/shows/{id}/proposals?status=ready` lists the queue.
+- `POST /studio-api/shows/{id}/items/quick` takes an optional `proposal_id`; the request carries
+  the fields as the rep corrected them.
+- `POST /studio-api/proposals/{id}/dismiss` `{ reason }` and `POST /studio-api/proposals/{id}/retry`.
 
 ### 5.8 After the stream
 
@@ -440,7 +554,7 @@ below are relative to those prefixes. The full contract lives in `api/openapi.ya
 
 | Area | storefront → `/api` | hg-studio → `/studio-api` |
 |---|---|---|
-| Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `GET /shows/{id}/ingest` (URL + key), `GET /shows/{id}/preview` (WebRTC session), `GET /shows/{id}/frames?from=` (ring buffer), `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick`, `GET /shows/{id}/proposals` (Phase 2), `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
+| Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `GET /shows/{id}/ingest` (URL + key), `GET /shows/{id}/preview` (WebRTC session), `GET /shows/{id}/frames?from=` (ring buffer), `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick` (optional `proposal_id`), `GET /shows/{id}/proposals`, `POST /proposals/{id}/dismiss`, `/retry` (Phase 2), `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
 | Catalog | `GET /products`, `GET /products/{id}` (incl. broadcasts and inspection media) | `PATCH /products/{id}`, options, variants, stock, media upload, `GET /catalog/suggestions`, `GET /catalog/incomplete` |
 | Checkout | `GET/PUT /cart`, `POST /checkout` (Buy now / from cart, takes holds), `POST /checkout/{id}/pay` | — |
 | Orders | `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel` | `GET /orders`, `POST /orders/{id}/inspection`, `/customs-check`, `/ship`, `/deliver`, `/refund`, `GET /orders/events` (SSE) |
