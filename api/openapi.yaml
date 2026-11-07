@@ -1,0 +1,3397 @@
+# hg-server HTTP API. Keep in sync with the routes: internal/app/openapi_test.go checks it.
+openapi: 3.1.0
+info:
+  title: hg-server API
+  version: 0.1.0
+  description: 'The HTTP contract between hg-server and its two apps.
+
+
+    - **/api**: used by storefront. Customer session cookie `hg_session`.
+
+    - **/studio-api**: used by hg-studio (H-Global Studio). Staff session cookie `hg_staff_session`; roles cs < manager <
+    owner.
+
+    - **/hooks**: payment provider webhooks.
+
+
+    Money is whole Korean won (`*_won`). Times are RFC 3339. IDs are UUIDv7. Errors are `{"error": code, "message": text}`
+    with 400, 401, 403, 404, 409 or 502. State-changing requests with an `Origin` header outside HG_ALLOWED_ORIGINS get 403
+    origin_not_allowed.
+
+
+    hg-server''s tests fail when a registered route is missing here (internal/app/openapi_test.go).'
+servers:
+- url: http://localhost:8080
+  description: Local hg-server
+tags:
+- name: auth
+- name: catalog
+- name: live
+- name: checkout
+- name: orders
+- name: studio-auth
+- name: studio-catalog
+- name: studio-live
+- name: studio-orders
+- name: hooks
+- name: dev
+- name: media
+- name: health
+paths:
+  /studio-api/auth/login:
+    post:
+      tags:
+      - studio-auth
+      summary: Staff sign-in (sets hg_staff_session)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Staff'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+  /studio-api/auth/logout:
+    post:
+      tags:
+      - studio-auth
+      summary: Staff sign-out
+      responses:
+        '204':
+          description: Signed out
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+  /studio-api/auth/me:
+    get:
+      tags:
+      - studio-auth
+      summary: Current staff member
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Staff'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+  /studio-api/staff:
+    get:
+      tags:
+      - studio-auth
+      summary: 'List staff. Role: owner or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Staff'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    post:
+      tags:
+      - studio-auth
+      summary: 'Add a staff member. Role: owner or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Staff'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewStaff'
+  /studio-api/staff/{id}:
+    patch:
+      tags:
+      - studio-auth
+      summary: 'Change a staff member. Role: owner or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Staff'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Deactivating or changing the password ends their sessions. The last active owner cannot be demoted.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffPatch'
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/auth/register:
+    post:
+      tags:
+      - auth
+      summary: Register (sets hg_session)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewCustomer'
+  /api/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Sign in (sets hg_session)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+  /api/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Sign out
+      responses:
+        '204':
+          description: Signed out
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+  /api/me:
+    get:
+      tags:
+      - auth
+      summary: Current customer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+  /studio-api/products:
+    get:
+      tags:
+      - studio-catalog
+      summary: 'List products. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+        description: Comma-separated statuses.
+      - name: q
+        in: query
+        schema:
+          type: string
+        description: Title contains.
+      - name: incomplete
+        in: query
+        schema:
+          type: boolean
+        description: Only products missing details.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+      - name: offset
+        in: query
+        schema:
+          type: integer
+    post:
+      tags:
+      - studio-catalog
+      summary: 'Create a product by hand. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewProduct'
+  /studio-api/products/{id}:
+    get:
+      tags:
+      - studio-catalog
+      summary: 'Get a product. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - studio-catalog
+      summary: 'Change product fields. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductPatch'
+  /studio-api/products/{id}/variants/{variant_id}:
+    patch:
+      tags:
+      - studio-catalog
+      summary: 'Change stock, price override, sold-out or status. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 stock_below_committed when stock would fall below held + sold.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VariantPatch'
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: variant_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/products/{id}/sold-out:
+    post:
+      tags:
+      - studio-catalog
+      summary: 'Mark every variant sold out. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/products/{id}/media:
+    post:
+      tags:
+      - studio-catalog
+      summary: 'Upload a photo or inspection photo/video. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Media'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 'Images are re-encoded as JPEG (metadata stripped), up to 15 MB. Videos: MP4, QuickTime or WebM, up to
+        200 MB.'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                  - photo
+                  - inspection_photo
+                  - inspection_video
+                  default: photo
+              required:
+              - file
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/products/{id}/media/{media_id}:
+    delete:
+      tags:
+      - studio-catalog
+      summary: 'Remove a photo or inspection file. Role: cs or higher.'
+      responses:
+        '204':
+          description: Removed
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: media_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/catalog/suggestions:
+    get:
+      tags:
+      - studio-catalog
+      summary: 'Recently used option values. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Suggestion'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: The labels used most in the last 90 days, with their swatch colors, so 'Brown' keeps one spelling.
+      security:
+      - staffSession: []
+      parameters:
+      - name: option
+        in: query
+        schema:
+          type: string
+        description: Option name, e.g. Color (case-insensitive).
+        required: true
+  /api/products:
+    get:
+      tags:
+      - catalog
+      summary: List live products
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PublicProduct'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+      parameters:
+      - name: q
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+      - name: offset
+        in: query
+        schema:
+          type: integer
+  /api/products/{id}:
+    get:
+      tags:
+      - catalog
+      summary: Product page
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProduct'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Live and hidden products are returned (hidden ones cannot be bought); drafts and archived ones are 404.
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows:
+    get:
+      tags:
+      - studio-live
+      summary: 'List shows. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Show'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+        description: Comma-separated.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+    post:
+      tags:
+      - studio-live
+      summary: 'Create a show. Role: manager or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Show'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewShow'
+  /studio-api/shows/{id}:
+    get:
+      tags:
+      - studio-live
+      summary: 'Show with items and full products. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioShow'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - studio-live
+      summary: 'Change a show. Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Show'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShowPatch'
+  /studio-api/shows/{id}/start:
+    post:
+      tags:
+      - studio-live
+      summary: 'Go live. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Show'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Locks item numbers; preselected draft or hidden products go live. 409 another_show_live.
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/end:
+    post:
+      tags:
+      - studio-live
+      summary: 'End the show. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Show'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Items not kept listed are hidden display_days_after days later.
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/events:
+    get:
+      tags:
+      - studio-live
+      summary: 'Show event stream (staff). Role: cs or higher.'
+      responses:
+        '200':
+          description: 'Server-Sent Events stream. Each event: `id`, `event` (type) and `data` (JSON). Resume with Last-Event-ID
+            or ?last_event_id=. `event: reset` means reload the snapshot.'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/items:
+    post:
+      tags:
+      - studio-live
+      summary: 'Preselect a product as the next number. Role: manager or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product_id:
+                  type: string
+                  format: uuid
+              required:
+              - product_id
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/items/{item_id}:
+    delete:
+      tags:
+      - studio-live
+      summary: 'Remove a preselected item before the show starts. Role: manager or higher.'
+      responses:
+        '204':
+          description: Removed
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: item_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/items/order:
+    put:
+      tags:
+      - studio-live
+      summary: 'Reorder preselected items before the show starts. Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                item_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+              required:
+              - item_ids
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/captures:
+    post:
+      tags:
+      - studio-live
+      summary: 'Upload a captured frame. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capture'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Stored unchanged (JPEG or PNG). broadcast_offset_sec is set while the show is live.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/captures/{id}:
+    get:
+      tags:
+      - studio-live
+      summary: 'Capture details. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capture'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/captures/{id}/image:
+    get:
+      tags:
+      - studio-live
+      summary: 'Capture image. Role: cs or higher.'
+      responses:
+        '200':
+          description: The image
+          content:
+            image/jpeg: {}
+            image/png: {}
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/shows/{id}/items/quick:
+    post:
+      tags:
+      - studio-live
+      summary: 'Quick listing: publish an item on air. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioItem'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 'One transaction: product, options, variants, stock, photo, numbered item and the viewer event commit together
+        or not at all. 409 show_not_live, already_in_show.'
+      security:
+      - staffSession: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+          maxLength: 100
+        description: A retry with the same key returns the same item.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuickListInput'
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/items/{id}/pin:
+    post:
+      tags:
+      - studio-live
+      summary: 'Pin as worn or held today. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioItem'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/items/{id}/unpin:
+    post:
+      tags:
+      - studio-live
+      summary: 'Unpin. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioItem'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/items/{id}/sold-out:
+    post:
+      tags:
+      - studio-live
+      summary: 'Mark the item''s product sold out. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioItem'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/items/{id}:
+    patch:
+      tags:
+      - studio-live
+      summary: 'Keep an item listed after the stream (or not). Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudioItem'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keep_listed:
+                  type: boolean
+              required:
+              - keep_listed
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/shows/current:
+    get:
+      tags:
+      - live
+      summary: The live show, else the next scheduled one
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  show:
+                    oneOf:
+                    - $ref: '#/components/schemas/ShowView'
+                    - type: 'null'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Items are listed once the show is live.
+      security: []
+  /api/shows:
+    get:
+      tags:
+      - live
+      summary: Ended shows (recaps)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Show'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - ended
+      - name: limit
+        in: query
+        schema:
+          type: integer
+  /api/shows/{id}:
+    get:
+      tags:
+      - live
+      summary: Live page snapshot
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShowView'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/shows/{id}/events:
+    get:
+      tags:
+      - live
+      summary: Live page event stream
+      responses:
+        '200':
+          description: 'Server-Sent Events stream. Each event: `id`, `event` (type) and `data` (JSON). Resume with Last-Event-ID
+            or ?last_event_id=. `event: reset` means reload the snapshot.'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 'Event types: live.show_started, live.show_ended, live.show_updated, live.item_published, live.item_updated
+        (price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned, live.item_removed, live.items_reordered.
+        Item events carry the full ItemView in data.item.'
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/shows/{id}/recap:
+    get:
+      tags:
+      - live
+      summary: Recap of an ended show
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShowView'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 show_not_ended before the show ends.
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/products/{id}/broadcasts:
+    get:
+      tags:
+      - live
+      summary: Where a product was shown, with replay links
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Broadcast'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders:
+    get:
+      tags:
+      - studio-orders
+      summary: 'List orders. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+        description: Comma-separated.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+      - name: offset
+        in: query
+        schema:
+          type: integer
+  /studio-api/orders/events:
+    get:
+      tags:
+      - studio-orders
+      summary: 'Order event stream (order.created, order.updated). Role: cs or higher.'
+      responses:
+        '200':
+          description: 'Server-Sent Events stream. Each event: `id`, `event` (type) and `data` (JSON). Resume with Last-Event-ID
+            or ?last_event_id=. `event: reset` means reload the snapshot.'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+  /studio-api/orders/{id}:
+    get:
+      tags:
+      - studio-orders
+      summary: 'Order with history. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/media/{media_id}:
+    get:
+      tags:
+      - studio-orders
+      summary: 'Inspection file. Role: cs or higher.'
+      responses:
+        '200':
+          description: The file
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: media_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/inspection:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Add an inspection photo or video. Role: cs or higher.'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: The first file moves a paid order to inspecting.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                  - photo
+                  - video
+                  default: photo
+              required:
+              - file
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/inspection/complete:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Finish inspection (inspecting -> customs_check). Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/customs-check:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Record the customs code check. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 pccc_missing when the order has no valid customs code.
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/ship:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Ship (customs_check -> shipped). Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 customs_not_checked.
+      security:
+      - staffSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                carrier:
+                  type: string
+                tracking_number:
+                  type: string
+              required:
+              - carrier
+              - tracking_number
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/deliver:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Mark delivered. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/complete:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Close a delivered order. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /studio-api/orders/{id}/cancel:
+    post:
+      tags:
+      - studio-orders
+      summary: 'Cancel and refund. Role: manager or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Refunds through the provider first. Stock returns if the order had not shipped.
+      security:
+      - staffSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders:
+    get:
+      tags:
+      - orders
+      summary: My orders
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                required:
+                - items
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+  /api/orders/{id}:
+    get:
+      tags:
+      - orders
+      summary: My order
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders/{id}/media/{media_id}:
+    get:
+      tags:
+      - orders
+      summary: Inspection file of my order
+      responses:
+        '200':
+          description: The file
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: media_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders/{id}/cancel:
+    post:
+      tags:
+      - orders
+      summary: Cancel my order (while unpaid or paid)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders/{id}/receipt:
+    post:
+      tags:
+      - orders
+      summary: Confirm receipt (delivered -> completed)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders/{id}/customs-code:
+    put:
+      tags:
+      - orders
+      summary: Correct the customs code before it is checked
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pccc:
+                  type: string
+              required:
+              - pccc
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/orders/{id}/pay:
+    post:
+      tags:
+      - checkout
+      summary: Retry payment for a pending order
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayResult'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/checkout:
+    post:
+      tags:
+      - checkout
+      summary: 'Buy now: hold stock and open a checkout'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkout'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Holds the stock until expires_at (10 minutes by default). 409 sold_out when it is gone.
+      security:
+      - customerSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      variant_id:
+                        type: string
+                        format: uuid
+                      qty:
+                        type: integer
+                        minimum: 1
+                        maximum: 100
+                    required:
+                    - variant_id
+                    - qty
+              required:
+              - lines
+  /api/checkout/{id}:
+    get:
+      tags:
+      - checkout
+      summary: My checkout
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkout'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    delete:
+      tags:
+      - checkout
+      summary: Abandon a checkout and release its holds
+      responses:
+        '204':
+          description: Canceled
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+  /api/checkout/{id}/shipping:
+    put:
+      tags:
+      - checkout
+      summary: Set address and customs code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkout'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 409 checkout_expired once the hold has run out.
+      security:
+      - customerSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Shipping'
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/checkout/{id}/pay:
+    post:
+      tags:
+      - checkout
+      summary: Place the order and start the payment
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayResult'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: 'Card: send the customer to payment.redirect_url. Virtual account: show payment.virtual_account. 502 payment_provider_unavailable;
+        retry with /api/orders/{id}/pay.'
+      security:
+      - customerSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum:
+                  - card
+                  - virtual_account
+              required:
+              - method
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /hooks/payments/{provider}:
+    post:
+      tags:
+      - hooks
+      summary: Payment provider webhook
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Signature-checked by the provider adapter; repeated events are ignored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+    parameters:
+    - name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+  /api/dev/payments/{id}/approve:
+    post:
+      tags:
+      - dev
+      summary: 'Development only: approve a fake payment'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Exists only with HG_DEV_ROUTES=true and the fake provider. Sends a signed webhook as the provider would.
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /api/dev/payments/{id}/fail:
+    post:
+      tags:
+      - dev
+      summary: 'Development only: decline a fake payment'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  /media/{path}:
+    get:
+      tags:
+      - media
+      summary: Public media (product photos and product inspection files)
+      responses:
+        '200':
+          description: The file, cacheable for a year
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+    parameters:
+    - name: path
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Object path, may contain slashes.
+  /healthz:
+    get:
+      tags:
+      - health
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+components:
+  securitySchemes:
+    customerSession:
+      type: apiKey
+      in: cookie
+      name: hg_session
+    staffSession:
+      type: apiKey
+      in: cookie
+      name: hg_staff_session
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Stable machine code, e.g. sold_out.
+        message:
+          type: string
+        details:
+          description: Optional structured details.
+      required:
+      - error
+    Staff:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+          - owner
+          - manager
+          - cs
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    Customer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Login:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required:
+      - email
+      - password
+    NewStaff:
+      type: object
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+          - owner
+          - manager
+          - cs
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+      required:
+      - email
+      - name
+      - role
+      - password
+    StaffPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum:
+          - owner
+          - manager
+          - cs
+        active:
+          type: boolean
+        password:
+          type: string
+    NewCustomer:
+      type: object
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+      required:
+      - email
+      - password
+    OptionValue:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        hex1:
+          type:
+          - string
+          - 'null'
+          description: 'Swatch color #rrggbb.'
+        hex2:
+          type:
+          - string
+          - 'null'
+          description: Second color for two-tone swatches.
+        position:
+          type: integer
+    Option:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        position:
+          type: integer
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/OptionValue'
+    Variant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        option_value_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        label:
+          type: string
+          description: e.g. 'Brown / Mini'.
+        position:
+          type: integer
+        price_override_won:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Whole Korean won.
+        price_won:
+          type: integer
+          format: int64
+          description: Effective price.
+        stock_mode:
+          type: string
+          enum:
+          - counted
+          - until_sold_out
+        stock_qty:
+          type: integer
+        held_qty:
+          type: integer
+        sold_qty:
+          type: integer
+        available_qty:
+          type:
+          - integer
+          - 'null'
+          description: null = unlimited (until_sold_out).
+        sold_out:
+          type: boolean
+        status:
+          type: string
+          enum:
+          - active
+          - inactive
+        buyable:
+          type: boolean
+    Media:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - photo
+          - inspection_photo
+          - inspection_video
+        url:
+          type: string
+        content_type:
+          type: string
+        position:
+          type: integer
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        status:
+          type: string
+          enum:
+          - draft
+          - live
+          - hidden
+          - archived
+        source:
+          type: string
+          enum:
+          - live_capture
+          - manual
+        specs:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        details_complete:
+          type: boolean
+          description: 'False while the title is a placeholder (Live #n) or the description is empty.'
+        created_by:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/Option'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variant'
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/Media'
+      description: Staff view of a product, with stock bookkeeping.
+    PublicVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        option_value_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        available_qty:
+          type:
+          - integer
+          - 'null'
+        sold_out:
+          type: boolean
+        buyable:
+          type: boolean
+    PublicProduct:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        status:
+          type: string
+          enum:
+          - live
+          - hidden
+        buyable:
+          type: boolean
+        sold_out:
+          type: boolean
+        specs:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/Option'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicVariant'
+        photos:
+          type: array
+          items:
+            type: string
+            description: URL.
+        inspection:
+          type: array
+          items:
+            type: object
+            properties:
+              kind:
+                type: string
+              url:
+                type: string
+      description: Storefront view of a product. There is no official (reference) price.
+    NewOptionValue:
+      type: object
+      properties:
+        label:
+          type: string
+          maxLength: 40
+        hex1:
+          type: string
+          description: 'Optional #rrggbb.'
+        hex2:
+          type: string
+          description: Optional; needs hex1.
+      required:
+      - label
+    NewOption:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 30
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewOptionValue'
+      required:
+      - name
+      - values
+    NewStock:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+          - counted
+          - until_sold_out
+          default: counted
+        qty:
+          type: integer
+          description: Per variant.
+          minimum: 0
+          maximum: 100000
+    NewProduct:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        status:
+          type: string
+          enum:
+          - draft
+          - live
+          - hidden
+          - archived
+          default: draft
+        specs:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewOption'
+        stock:
+          $ref: '#/components/schemas/NewStock'
+      required:
+      - title
+      - price_won
+      description: Every combination of option values becomes a variant (at most 100).
+    ProductPatch:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        status:
+          type: string
+          enum:
+          - draft
+          - live
+          - hidden
+          - archived
+        specs:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+    VariantPatch:
+      type: object
+      properties:
+        stock_mode:
+          type: string
+          enum:
+          - counted
+          - until_sold_out
+        stock_qty:
+          type: integer
+        price_override_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        clear_price_override:
+          type: boolean
+        sold_out:
+          type: boolean
+        status:
+          type: string
+          enum:
+          - active
+          - inactive
+    Suggestion:
+      type: object
+      properties:
+        label:
+          type: string
+        hex1:
+          type:
+          - string
+          - 'null'
+        hex2:
+          type:
+          - string
+          - 'null'
+        uses:
+          type: integer
+    Show:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        youtube_video_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - scheduled
+          - live
+          - ended
+        scheduled_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        ended_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        display_days_after:
+          type: integer
+          description: Days items stay on sale after the show ends.
+        next_number:
+          type: integer
+        host_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    NewShow:
+      type: object
+      properties:
+        title:
+          type: string
+        youtube_url:
+          type: string
+          description: A video ID or a youtube.com / youtu.be link.
+        scheduled_at:
+          type: string
+          format: date-time
+        display_days_after:
+          type: integer
+          default: 3
+        host_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - scheduled
+          default: draft
+      required:
+      - title
+    ShowPatch:
+      type: object
+      properties:
+        title:
+          type: string
+        youtube_url:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        display_days_after:
+          type: integer
+        host_name:
+          type: string
+        status:
+          type: string
+          enum:
+          - draft
+          - scheduled
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        show_id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          description: Never reused or renumbered once the show is live.
+        source:
+          type: string
+          enum:
+          - preselected
+          - captured
+          - matched
+        product_id:
+          type: string
+          format: uuid
+        pinned:
+          type: boolean
+          description: Worn or held today.
+        capture_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        broadcast_offset_sec:
+          type:
+          - integer
+          - 'null'
+        keep_listed:
+          type: boolean
+        hide_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        hidden_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        published_at:
+          type: string
+          format: date-time
+        published_by:
+          type:
+          - string
+          - 'null'
+          format: uuid
+    ItemView:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+        source:
+          type: string
+          enum:
+          - preselected
+          - captured
+          - matched
+        pinned:
+          type: boolean
+        is_new:
+          type: boolean
+          description: Listed on air in the last 15 minutes.
+        published_at:
+          type: string
+          format: date-time
+        broadcast_offset_sec:
+          type:
+          - integer
+          - 'null'
+        replay_url:
+          type: string
+          description: youtube.com/watch?v={id}&t={offset}s, or empty.
+        product:
+          $ref: '#/components/schemas/PublicProduct'
+    StudioItem:
+      allOf:
+      - $ref: '#/components/schemas/Item'
+      - type: object
+        properties:
+          replay_url:
+            type: string
+          product:
+            $ref: '#/components/schemas/Product'
+    ShowView:
+      allOf:
+      - $ref: '#/components/schemas/Show'
+      - type: object
+        properties:
+          watch_url:
+            type: string
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/ItemView'
+          last_event_id:
+            type: integer
+            description: Open /events from this id to miss nothing.
+            format: int64
+    StudioShow:
+      allOf:
+      - $ref: '#/components/schemas/Show'
+      - type: object
+        properties:
+          watch_url:
+            type: string
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/StudioItem'
+          last_event_id:
+            type: integer
+            format: int64
+    Capture:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        show_id:
+          type: string
+          format: uuid
+        content_type:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        broadcast_offset_sec:
+          type:
+          - integer
+          - 'null'
+        source:
+          type: string
+          enum:
+          - upload
+          - relay
+        created_by:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        image_url:
+          type: string
+          description: Staff-only image route.
+    Crop:
+      type: object
+      properties:
+        x:
+          type: integer
+        y:
+          type: integer
+        w:
+          type: integer
+          minimum: 16
+        h:
+          type: integer
+          minimum: 16
+      required:
+      - x
+      - y
+      - w
+      - h
+    QuickListInput:
+      type: object
+      properties:
+        capture_id:
+          type: string
+          format: uuid
+        crop:
+          $ref: '#/components/schemas/Crop'
+        product_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: 'Defaults to ''Live #<number>''.'
+        description:
+          type: string
+        price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewOption'
+        stock:
+          $ref: '#/components/schemas/NewStock'
+      description: 'New product: capture_id and price_won are required. Existing product: product_id, and optionally price_won
+        to change its price.'
+    Broadcast:
+      type: object
+      properties:
+        show_id:
+          type: string
+          format: uuid
+        show_title:
+          type: string
+        number:
+          type: integer
+        shown_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        broadcast_offset_sec:
+          type:
+          - integer
+          - 'null'
+        replay_url:
+          type: string
+    Shipping:
+      type: object
+      properties:
+        recipient:
+          type: string
+        phone:
+          type: string
+        postcode:
+          type: string
+        address1:
+          type: string
+        address2:
+          type: string
+        country:
+          type: string
+          default: KR
+        pccc:
+          type: string
+          description: 'Korea personal customs clearance code: P + 12 digits. Required before shipping.'
+      required:
+      - recipient
+      - phone
+      - postcode
+      - address1
+    Line:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        variant_label:
+          type: string
+        photo_url:
+          type: string
+        unit_price_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        qty:
+          type: integer
+    OrderMedia:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - photo
+          - video
+        content_type:
+          type: string
+        url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    History:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        actor_kind:
+          type: string
+          enum:
+          - customer
+          - staff
+          - system
+          - payment
+        actor_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        note:
+          type: string
+        at:
+          type: string
+          format: date-time
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: e.g. HG0000001.
+        customer_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - pending_payment
+          - paid
+          - inspecting
+          - customs_check
+          - shipped
+          - delivered
+          - completed
+          - canceled
+        subtotal_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        shipping_fee_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        total_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        refunded_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        shipping:
+          $ref: '#/components/schemas/Shipping'
+        payment_method:
+          type: string
+          enum:
+          - card
+          - virtual_account
+        payment_deadline:
+          type: string
+          format: date-time
+        paid_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        inspection_done_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        customs_checked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        shipped_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        carrier:
+          type: string
+        tracking_number:
+          type: string
+        delivered_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        completed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        canceled_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        cancel_reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/Line'
+        inspection_media:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderMedia'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/History'
+      description: Customers see inspection_media once inspection is done; history is staff-only.
+    Checkout:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - open
+          - ordered
+          - expired
+          - canceled
+        expires_at:
+          type: string
+          format: date-time
+        shipping:
+          oneOf:
+          - $ref: '#/components/schemas/Shipping'
+          - type: 'null'
+        order_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/Line'
+        subtotal_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        shipping_fee_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        total_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        created_at:
+          type: string
+          format: date-time
+    VirtualAccount:
+      type: object
+      properties:
+        bank:
+          type: string
+        account:
+          type: string
+        holder:
+          type: string
+        due_at:
+          type: string
+          format: date-time
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        method:
+          type: string
+          enum:
+          - card
+          - virtual_account
+        status:
+          type: string
+          enum:
+          - pending
+          - succeeded
+          - failed
+          - canceled
+        amount_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        refunded_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        provider_ref:
+          type: string
+        redirect_url:
+          type: string
+          description: Where to send the customer to pay by card.
+        virtual_account:
+          oneOf:
+          - $ref: '#/components/schemas/VirtualAccount'
+          - type: 'null'
+        failure_reason:
+          type: string
+        succeeded_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    PayResult:
+      type: object
+      properties:
+        order:
+          $ref: '#/components/schemas/Order'
+        payment:
+          $ref: '#/components/schemas/Payment'

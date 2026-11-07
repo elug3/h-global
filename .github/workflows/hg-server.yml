@@ -1,0 +1,39 @@
+name: hg-server
+
+on:
+  push:
+    paths: ["hg-server/**", "api/openapi.yaml", ".github/workflows/hg-server.yml"]
+  pull_request:
+    paths: ["hg-server/**", "api/openapi.yaml", ".github/workflows/hg-server.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: hglobal
+          POSTGRES_PASSWORD: hglobal_dev
+          POSTGRES_DB: hglobal_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hglobal -d hglobal_test"
+          --health-interval 2s --health-retries 30
+    defaults:
+      run:
+        working-directory: hg-server
+    env:
+      HG_TEST_DATABASE_URL: postgres://hglobal:hglobal_dev@localhost:5432/hglobal_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hg-server/go.mod
+          cache-dependency-path: hg-server/go.sum
+      - name: Format
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
