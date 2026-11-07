@@ -30,7 +30,8 @@ decisions are in [`../docs/plan/backend-plan.md`](../docs/plan/backend-plan.md).
 | Orders: pending_payment → paid → inspecting → customs_check → shipped → delivered → completed; cancel with refund | Built |
 | Inspection photos and videos per order | Built |
 | Payment provider interface, webhook verification and idempotency, late-payment auto refund | Built, with a **fake provider** until one is chosen (plan D2) |
-| Staff order feed (SSE) | Built |
+| Staff order feed (SSE); order search (number, recipient, phone), counts per status | Built |
+| Sales per stream (`GET /studio-api/shows/{id}/sales`): orders, units and sales per item | Built |
 | **Broadcast relay** (prototype): SRT ingest with a per-show passphrase, unchanged copy to YouTube, 2 fps frame buffer (120 s), MJPEG preview, capture from a buffered frame | Built ([docs/prototype/relay.md](../docs/prototype/relay.md)) |
 | YouTube Data API, hg-agent, 1:1 chat, Telegram/email, Kakao/SMS login, password reset, cart, reviews | **Not built yet** (see "Next") |
 
@@ -211,6 +212,14 @@ PostgreSQL `LISTEN/NOTIFY` fan-out (plan 5.3).
    `…/inspection/complete` → `…/customs-check` (requires a valid PCCC) → `…/ship` → `…/deliver`.
    The customer confirms receipt (`POST /api/orders/{id}/receipt`).
 7. Cancel: the provider refunds first, then the order changes.
+8. Staff lists: `GET /studio-api/orders?status=paid,inspecting&q=…` (q matches the order number or
+   recipient, or 3+ digits of the phone) and `GET /studio-api/orders/counts` (orders per status).
+
+**Sales per stream** (`GET /studio-api/shows/{id}/sales`, for Studio's after-stream screen): an order
+line counts for a stream when its product is one of the stream's items, the order was placed after
+the stream started, and no later stream featuring the same product had started by then. Paid,
+uncanceled orders give `orders`, `units` and `sales_won` (line totals, shipping excluded), in total
+and per item; `pending_orders` and `canceled_orders` are counted beside them.
 
 With the fake provider, `POST /api/dev/payments/{id}/approve` plays the customer paying
 (`HG_DEV_ROUTES=true`).
@@ -242,6 +251,7 @@ go vet ./...
 | Test | Covers |
 |---|---|
 | `internal/app` `TestLiveStreamToDelivery` | The plan's end-to-end flow over HTTP: go live, viewer stream, capture, quick listing, two buyers racing for one unit, pay, inspect, customs check, ship, deliver, receipt, replay links, recap |
+| `internal/app` `TestOrderSearchCountsAndShowSales` | Order search and status counts; sales per stream, including an order before the stream, a canceled one, an unpaid one and the same product in a later stream |
 | `internal/app` `TestPaidCancelRefundsAndReturnsStock`, `TestAccessRules` | Refund and stock return; roles, session separation, cross-site origin check |
 | `internal/app` `TestRoutesMatchOpenAPI` | Every route is in `api/openapi.yaml` and nothing extra is documented |
 | `internal/app` `TestJobsRunOnASmallPool` | Jobs cannot deadlock the connection pool |

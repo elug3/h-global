@@ -50,13 +50,17 @@ with an MJPEG preview instead of WebRTC. Frames reach hg-server about 0.5 s afte
 local tests; see [docs/prototype/relay.md](../prototype/relay.md) for results, differences from
 5.5 and how to measure on H-Global's server.
 
-**hg-studio (2026-11-07):** sign-in, stream setup and the live console are built in Korean
-([hg-studio/README.md](../../hg-studio/README.md)), tested end to end in a browser against hg-server
-and the relay.
+**hg-studio (2026-11-07):** built in Korean ([hg-studio/README.md](../../hg-studio/README.md)):
+sign-in, stream setup, the live console, orders (list, detail, inspection to delivery, cancel and
+refund), products (list, editing, photos, inspection media, stock per option), the after-stream
+screen (sales, keep listed, sale period, completion list, KakaoTalk recap text) and staff
+management. Tested end to end in a browser against hg-server and the relay. For these screens
+hg-server gained order search, order counts per status and sales per stream (5.7).
 
 **Not built yet:** YouTube Data API, hg-agent (5.6),
 notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
-the internal API, storefront, and hg-studio's orders, product editing and after-stream screens.
+the internal API, storefront, the recap share image (5.7), and editing a product's options after
+it is created.
 
 ## 1. Summary
 

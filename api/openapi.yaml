@@ -1620,7 +1620,7 @@ paths:
     get:
       tags:
       - studio-orders
-      summary: 'List orders. Role: cs or higher.'
+      summary: 'List orders, newest first. Role: cs or higher.'
       responses:
         '200':
           description: OK
@@ -1649,6 +1649,12 @@ paths:
         schema:
           type: string
         description: Comma-separated.
+      - name: q
+        in: query
+        schema:
+          type: string
+          maxLength: 100
+        description: Order number or recipient (part of it), or 3+ digits of the phone number.
       - name: limit
         in: query
         schema:
@@ -1657,6 +1663,56 @@ paths:
         in: query
         schema:
           type: integer
+  /studio-api/orders/counts:
+    get:
+      tags:
+      - studio-orders
+      summary: 'Number of orders in each status. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  counts:
+                    $ref: '#/components/schemas/OrderCounts'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+  /studio-api/shows/{id}/sales:
+    get:
+      tags:
+      - studio-orders
+      summary: 'Orders and sales from one stream. Role: cs or higher.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShowSales'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - staffSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   /studio-api/orders/events:
     get:
       tags:
@@ -3672,6 +3728,90 @@ components:
       - actor_id
       - note
       - at
+    OrderCounts:
+      type: object
+      properties:
+        pending_payment:
+          type: integer
+        paid:
+          type: integer
+        inspecting:
+          type: integer
+        customs_check:
+          type: integer
+        shipped:
+          type: integer
+        delivered:
+          type: integer
+        completed:
+          type: integer
+        canceled:
+          type: integer
+      description: Orders per status.
+      required:
+      - pending_payment
+      - paid
+      - inspecting
+      - customs_check
+      - shipped
+      - delivered
+      - completed
+      - canceled
+    ItemSales:
+      type: object
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        orders:
+          type: integer
+        units:
+          type: integer
+        sales_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+      required:
+      - item_id
+      - orders
+      - units
+      - sales_won
+    ShowSales:
+      type: object
+      properties:
+        show_id:
+          type: string
+          format: uuid
+        orders:
+          type: integer
+          description: Paid orders that are not canceled.
+        units:
+          type: integer
+        sales_won:
+          type: integer
+          format: int64
+          description: Whole Korean won.
+        pending_orders:
+          type: integer
+          description: Waiting for payment.
+        canceled_orders:
+          type: integer
+          description: Paid, then canceled and refunded.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemSales'
+      description: Orders from one stream. An order line counts for a stream when its product is one of the stream's items,
+        the order was placed after the stream started, and no later stream with the same product had started. Amounts are
+        line totals without shipping. Items without orders are left out.
+      required:
+      - show_id
+      - orders
+      - units
+      - sales_won
+      - pending_orders
+      - canceled_orders
+      - items
     Order:
       type: object
       properties:
@@ -3780,6 +3920,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/History'
+          description: Staff order detail only.
       description: Customers see inspection_media once inspection is done; history is staff-only.
       required:
       - id
@@ -3807,7 +3948,6 @@ components:
       - updated_at
       - lines
       - inspection_media
-      - history
     Checkout:
       type: object
       properties:

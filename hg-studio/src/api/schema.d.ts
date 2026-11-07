@@ -2595,12 +2595,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List orders. Role: cs or higher. */
+        /** List orders, newest first. Role: cs or higher. */
         get: {
             parameters: {
                 query?: {
                     /** @description Comma-separated. */
                     status?: string;
+                    /** @description Order number or recipient (part of it), or 3+ digits of the phone number. */
+                    q?: string;
                     limit?: number;
                     offset?: number;
                 };
@@ -2619,6 +2621,102 @@ export interface paths {
                         "application/json": {
                             items: components["schemas"]["Order"][];
                         };
+                    };
+                };
+                /** @description Error */
+                default: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/studio-api/orders/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Number of orders in each status. Role: cs or higher. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            counts?: components["schemas"]["OrderCounts"];
+                        };
+                    };
+                };
+                /** @description Error */
+                default: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/studio-api/shows/{id}/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Orders and sales from one stream. Role: cs or higher. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShowSales"];
                     };
                 };
                 /** @description Error */
@@ -4536,6 +4634,46 @@ export interface components {
             /** Format: date-time */
             at: string;
         };
+        /** @description Orders per status. */
+        OrderCounts: {
+            pending_payment: number;
+            paid: number;
+            inspecting: number;
+            customs_check: number;
+            shipped: number;
+            delivered: number;
+            completed: number;
+            canceled: number;
+        };
+        ItemSales: {
+            /** Format: uuid */
+            item_id: string;
+            orders: number;
+            units: number;
+            /**
+             * Format: int64
+             * @description Whole Korean won.
+             */
+            sales_won: number;
+        };
+        /** @description Orders from one stream. An order line counts for a stream when its product is one of the stream's items, the order was placed after the stream started, and no later stream with the same product had started. Amounts are line totals without shipping. Items without orders are left out. */
+        ShowSales: {
+            /** Format: uuid */
+            show_id: string;
+            /** @description Paid orders that are not canceled. */
+            orders: number;
+            units: number;
+            /**
+             * Format: int64
+             * @description Whole Korean won.
+             */
+            sales_won: number;
+            /** @description Waiting for payment. */
+            pending_orders: number;
+            /** @description Paid, then canceled and refunded. */
+            canceled_orders: number;
+            items: components["schemas"]["ItemSales"][];
+        };
         /** @description Customers see inspection_media once inspection is done; history is staff-only. */
         Order: {
             /** Format: uuid */
@@ -4594,7 +4732,8 @@ export interface components {
             updated_at: string;
             lines: components["schemas"]["Line"][];
             inspection_media: components["schemas"]["OrderMedia"][];
-            history: components["schemas"]["History"][];
+            /** @description Staff order detail only. */
+            history?: components["schemas"]["History"][];
         };
         Checkout: {
             /** Format: uuid */

@@ -5,17 +5,26 @@ managers prepare streams. Korean UI, desktop only (1200 px and wider).
 
 It talks only to hg-server's `/studio-api`, typed from [`../api/openapi.yaml`](../api/openapi.yaml).
 
-## What is built (scope 1–3)
+## What is built
 
 | Screen | Route | What it does |
 |---|---|---|
 | 로그인 (sign-in) | `/login` | Staff email and password. The session is an HttpOnly cookie set by hg-server. |
-| 방송 (streams) | `/shows` | List of streams; managers create one. |
+| 방송 (streams) | `/shows` | List of streams; managers create one. Ended streams open 방송 후 정리. |
 | 방송 준비 (stream setup) | `/shows/:id/setup` | Title, YouTube link, schedule, host, days on sale after the stream, "공개 예정" toggle; OBS ingest URL with copy and key rotation; preselected items No. 1–8 with drag (or ▲▼) reordering, product search and quick "새 상품 만들기"; 방송 시작. |
 | 라이브 콘솔 (live console) | `/shows/:id/live` | Three columns, no page changes during a stream: **방송 화면** (relay preview, 캡처 with Space, 직전 장면에서 고르기, paste Ctrl+V, file upload, recent captures) · **빠른 등록** (drag to crop, name, price, color and size chips from recently used values or new ones with a swatch color, quantity or "수량 모름", publish as the next number, retry-safe) · **등록 상품** (newest first, sold/stock, pin "오늘 착용/소지", price edit, 품절 처리). Top bar: LIVE timer, relay and YouTube push status, 방송 종료. Live updates over SSE. |
+| 방송 후 정리 (after the stream) | `/shows/:id/after` | Sales of this stream (판매액, 주문, 수량, 결제 대기, 취소·환불, 방송 시간) and per item; **계속 판매** per item and the hide date of the others; **방송 후 판매 기간** (changing it moves the hide dates); **정보 입력이 필요한 상품** (no real name or no description yet) with a link to fill them in; **다시보기 공유**: the KakaoTalk post text (items, prices, time in the replay, sale end) to copy. |
+| 주문 (orders) | `/orders` | Tabs by status with counts (default **처리 필요** = 결제 완료, 검수 중, 통관 확인), search by order number, recipient or phone, live updates; the menu badge shows orders waiting for staff. |
+| 주문 상세 (order) | `/orders/:id` | Progress (결제 → 검수 → 통관 확인 → 배송 → 배송 완료 → 구매 확정), items and amounts, address with 개인통관고유부호 check, payment, history. **다음 할 일** panel: upload inspection photos/videos and finish inspection, confirm the customs code, ship with carrier and tracking number, mark delivered, close. **주문 취소** (manager): refund, with stock returned before shipping. |
+| 상품 (products) | `/products` | Search, status filter, "정보 미완성만"; **새 상품** with colors, sizes and quantity. |
+| 상품 편집 (product) | `/products/:id` | Name, price, status, description, specs, tags; photos (first is the main one); inspection photos and videos; price, stock mode, stock and sold out per option, or the whole product sold out. |
+| 직원 (staff) | `/staff` | Owners only: add staff, change role, turn an account off, reset a password. |
 
-Coming later: orders, product editing, the after-stream screen, staff management (step 4–5),
-chat (needs hg-server's chat), viewer count (needs the YouTube Data API).
+Coming later: chat (needs hg-server's chat), viewer count (needs the YouTube Data API), the recap
+share image, and editing a product's options after it is created.
+
+Roles follow hg-server: CS runs the console and moves orders through inspection and shipping;
+managers also prepare streams, refund, and change what stays listed; owners also manage staff.
 
 ## Run it
 
@@ -55,27 +64,37 @@ src/
   auth.tsx               signed-in staff, RequireAuth
   api/                   client.ts, schema.d.ts (generated)
   i18n/ko.ts             all UI text
-  lib/                   format (₩, dates), hooks (load, SSE, interval)
-  components/            Layout (left rail), Icon, ui (LIVE, No. badge, swatch, stepper, toggle)
+  lib/                   format (₩, dates), hooks (load, SSE, debounce, interval)
+  components/            Layout (left rail), Icon, ui (LIVE, No. badge, swatch, stepper, toggle),
+                         OptionPicker, Gallery, product and order helpers
   components/console/    StreamPanel, CropImage, QuickListPanel, PublishedList
-  pages/                 Login, Shows, ShowSetup, LiveConsole
-e2e/                     Playwright test
+  pages/                 Login, Shows, ShowSetup, LiveConsole, AfterShow, Orders, OrderDetail,
+                         Products, ProductEdit, StaffPage
+e2e/                     Playwright tests
 ```
 
 ## Tests
 
-`npm run test:e2e` starts hg-server (`go run`, fresh database, relay on) and the Vite server, then
-Chromium walks through the three screens:
+`npm run test:e2e` starts hg-server (`go run`, fresh database, relay on, fake payments) and the Vite
+server, then Chromium runs two tests:
 
-sign-in (wrong password, then right) → create a stream → YouTube link, host, 공개 예정, save →
-create a product as No.1 → read the OBS ingest URL → 방송 시작 → an ffmpeg test broadcast connects
-with that URL → relay shows 수신 중 → capture with Space → drag to crop → price, colors, size,
-수량 모름 → No.2 등록 → listed with ₩89,000 → pin → the colors just typed come back as suggestions →
-방송 종료.
+1. **`live-console.spec.ts`**: sign-in (wrong password, then right) → create a stream → YouTube
+   link, host, 공개 예정, save → create a product as No.1 → read the OBS ingest URL → 방송 시작 →
+   an ffmpeg test broadcast connects with that URL → relay shows 수신 중 → capture with Space →
+   drag to crop → price, colors, size, 수량 모름 → No.2 등록 → listed with ₩89,000 → pin → the
+   colors just typed come back as suggestions → 방송 종료.
+2. **`orders-after-stream.spec.ts`**: through the API, a stream with two products, three customer
+   orders (two paid with the fake provider, one unpaid) and the end of the stream; then in the
+   browser: the menu badge and 처리 필요 tab → a new order appears live → filter and search → one
+   order through inspection photo, customs check, shipping, delivery and 구매 확정 with its history
+   → another order canceled and refunded → 방송 후 정리 shows ₩238,000 from 2 orders → 계속 판매 →
+   판매 기간 5일 → the recap text → 정보 입력 for the product missing a description: description,
+   a spec, a photo, more stock for one color → the completion list is empty → the product filter →
+   add a staff member and make them a manager.
 
 Needs Go, psql, ffmpeg and PostgreSQL 18; the database in `HG_E2E_DATABASE_URL`
 (default `postgres://hglobal:hglobal_dev@localhost:5432/hglobal_e2e`) is wiped at the start.
-`HG_SCREENSHOT_DIR=/some/dir` saves screenshots of the three screens.
+`HG_SCREENSHOT_DIR=/some/dir` saves screenshots of the screens.
 
 ## Production
 

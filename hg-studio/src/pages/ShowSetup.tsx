@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { ApiError, api, call, errorText, type Ingest, type Product, type StudioItem, type StudioShow } from "../api/client";
 import { useAuth } from "../auth";
 import { Icon } from "../components/Icon";
+import { stockText, Thumb } from "../components/product";
 import { CopyButton, ErrorBanner, NumberBadge, StatusTag, Stepper, Toggle } from "../components/ui";
 import { t } from "../i18n/ko";
 import { fromLocalInput, toLocalInput, won } from "../lib/format";
@@ -323,27 +324,6 @@ function Preselected({ show, editable, reload }: { show: StudioShow; editable: b
       {editable && <AddProducts exclude={items.map((i) => i.product_id)} onAdd={add} />}
     </section>
   );
-}
-
-export function Thumb({ product, size = 44 }: { product: Product; size?: number }) {
-  const photo = product.media.find((m) => m.kind === "photo");
-  return photo ? (
-    <img className="thumb" src={photo.url} width={size} height={size} alt="" />
-  ) : (
-    <span className="thumb thumb-empty" style={{ width: size, height: size }} />
-  );
-}
-
-export function stockText(p: Product): string {
-  let unlimited = false;
-  let stock = 0;
-  let sold = 0;
-  for (const v of p.variants) {
-    sold += v.sold_qty;
-    if (v.stock_mode === "until_sold_out") unlimited = true;
-    else stock += v.stock_qty;
-  }
-  return `${t.console.soldStock} ${sold} / ${unlimited ? t.console.unlimited : stock}`;
 }
 
 function AddProducts({ exclude, onAdd }: { exclude: string[]; onAdd: (productId: string) => Promise<void> }) {

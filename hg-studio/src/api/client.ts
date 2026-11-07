@@ -23,6 +23,20 @@ export type NewOption = S["NewOption"];
 export type NewShow = S["NewShow"];
 export type ShowPatch = S["ShowPatch"];
 export type QuickListInput = S["QuickListInput"];
+export type Media = S["Media"];
+export type ProductPatch = S["ProductPatch"];
+export type VariantPatch = S["VariantPatch"];
+export type NewProduct = S["NewProduct"];
+export type Order = S["Order"];
+export type OrderLine = S["Line"];
+export type OrderHistory = S["History"];
+export type OrderMedia = S["OrderMedia"];
+export type OrderCounts = S["OrderCounts"];
+export type OrderStatus = Order["status"];
+export type ShowSales = S["ShowSales"];
+export type ItemSales = S["ItemSales"];
+export type NewStaff = S["NewStaff"];
+export type StaffPatch = S["StaffPatch"];
 
 /** An error from hg-server, with its stable code and a Korean message. */
 export class ApiError extends Error {
@@ -31,7 +45,7 @@ export class ApiError extends Error {
     public status: number,
     serverMessage?: string,
   ) {
-    super(t.errors[code] ?? serverMessage ?? t.errors.generic);
+    super(t.errors[code] ?? (code.endsWith("_not_found") ? t.errors.not_found : undefined) ?? serverMessage ?? t.errors.generic);
   }
 }
 
@@ -56,7 +70,7 @@ export async function call<T>(
 export async function upload<T>(url: string, file: Blob, fields: Record<string, string> = {}): Promise<T> {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, v);
-  form.append("file", file, "image");
+  form.append("file", file, file instanceof File ? file.name : "image");
   let res: Response;
   try {
     res = await fetch(url, { method: "POST", body: form, credentials: "same-origin" });

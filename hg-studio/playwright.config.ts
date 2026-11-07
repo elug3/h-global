@@ -34,6 +34,7 @@ export default defineConfig({
         HG_OWNER_EMAIL: "owner@hglobal.test",
         HG_OWNER_PASSWORD: "owner-password",
         HG_BCRYPT_COST: "4",
+        HG_DEV_ROUTES: "true", // fake payment approval for the order test
         HG_ALLOWED_ORIGINS: STUDIO,
         HG_RELAY_ENABLED: "true",
         HG_RELAY_LISTEN: RELAY,

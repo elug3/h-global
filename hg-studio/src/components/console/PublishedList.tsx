@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, call, errorText, type StudioItem } from "../../api/client";
 import { t } from "../../i18n/ko";
 import { won } from "../../lib/format";
-import { stockText, Thumb } from "../../pages/ShowSetup";
+import { isSoldOut, stockText, Thumb } from "../product";
 import { Icon } from "../Icon";
 import { ErrorBanner, NumberBadge } from "../ui";
 
@@ -40,7 +40,7 @@ export function PublishedList({ items, onChanged }: { items: StudioItem[]; onCha
           {sorted.length === 0 && <p className="muted empty">{t.console.noPublished}</p>}
           <ul className="pub-list" data-testid="published">
             {sorted.map((it) => {
-              const soldOut = it.product.variants.every((v) => !v.buyable);
+              const soldOut = isSoldOut(it.product);
               return (
                 <li key={it.id} className={"pub-row" + (soldOut ? " sold" : "")}>
                   <Thumb product={it.product} size={40} />

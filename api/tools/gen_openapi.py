@@ -122,6 +122,15 @@ schemas = {
   "OrderMedia": obj({"id": UUID, "kind": S(enum=["photo", "video"]), "content_type": S(), "url": S(), "created_at": TIME}),
   "History": obj({"from": S(), "to": S(), "actor_kind": S(enum=["customer", "staff", "system", "payment"]),
       "actor_id": nullable(UUID), "note": S(), "at": TIME}),
+  "OrderCounts": obj({st: I() for st in ["pending_payment", "paid", "inspecting", "customs_check", "shipped",
+                                             "delivered", "completed", "canceled"]}, desc="Orders per status."),
+  "ItemSales": obj({"item_id": UUID, "orders": I(), "units": I(), "sales_won": WON}),
+  "ShowSales": obj({"show_id": UUID, "orders": I("Paid orders that are not canceled."), "units": I(), "sales_won": WON,
+      "pending_orders": I("Waiting for payment."), "canceled_orders": I("Paid, then canceled and refunded."),
+      "items": arr(ref("ItemSales"))},
+      desc="Orders from one stream. An order line counts for a stream when its product is one of the stream's items, "
+           "the order was placed after the stream started, and no later stream with the same product had started. "
+           "Amounts are line totals without shipping. Items without orders are left out."),
   "Order": obj({
       "id": UUID, "number": S("e.g. HG0000001."), "customer_id": UUID,
       "status": S(enum=["pending_payment", "paid", "inspecting", "customs_check", "shipped", "delivered", "completed", "canceled"]),
@@ -162,6 +171,9 @@ def _all_required(sch):
 for _name, _sch in schemas.items():
     if _name not in REQUEST_ONLY:
         _all_required(_sch)
+# Order.history is only in the staff detail (GET /studio-api/orders/{id} and transitions), not in lists.
+schemas["Order"]["required"].remove("history")
+schemas["Order"]["properties"]["history"]["description"] = "Staff order detail only."
 
 def resp(schema=None, desc="OK", status="200"):
     r = {"description": desc}
@@ -312,7 +324,12 @@ op("POST", "/studio-api/shows/{id}/captures/relay", "studio-relay", "Keep a buff
    desc="The capture's broadcast_offset_sec is the frame's place in the stream.")
 
 # --- Studio: orders
-op("GET", "/studio-api/orders", "studio-orders", "List orders." + role("cs"), resp(items_of(ref("Order"))), STAFF, params=[q("status", S(), "Comma-separated."), *pg])
+op("GET", "/studio-api/orders", "studio-orders", "List orders, newest first." + role("cs"), resp(items_of(ref("Order"))), STAFF,
+   params=[q("status", S(), "Comma-separated."),
+           q("q", S(maxLength=100), "Order number or recipient (part of it), or 3+ digits of the phone number."), *pg])
+op("GET", "/studio-api/orders/counts", "studio-orders", "Number of orders in each status." + role("cs"),
+   resp(obj({"counts": ref("OrderCounts")})), STAFF)
+op("GET", "/studio-api/shows/{id}/sales", "studio-orders", "Orders and sales from one stream." + role("cs"), resp(ref("ShowSales")), STAFF)
 op("GET", "/studio-api/orders/events", "studio-orders", "Order event stream (order.created, order.updated)." + role("cs"), SSE, STAFF)
 op("GET", "/studio-api/orders/{id}", "studio-orders", "Order with history." + role("cs"), resp(ref("Order")), STAFF)
 op("GET", "/studio-api/orders/{id}/media/{media_id}", "studio-orders", "Inspection file." + role("cs"), {"200": {"description": "The file"}}, STAFF)

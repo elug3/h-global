@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { t } from "../i18n/ko";
 import { Icon } from "./Icon";
 
@@ -95,10 +95,20 @@ export function ErrorBanner({ text, onRetry }: { text?: string; onRetry?: () => 
   );
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  disabled?: boolean;
+}) {
   return (
-    <label className={"toggle" + (checked ? " on" : "")}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={"toggle" + (checked ? " on" : "") + (disabled ? " disabled" : "")}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <i aria-hidden="true" />
       <span>{label}</span>
     </label>

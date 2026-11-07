@@ -10,7 +10,7 @@ the stream.
 |---|---|---|
 | [`hg-server/`](hg-server/README.md) | Go monolith: all business rules, PostgreSQL 18, background jobs | Phase 1 core built |
 | `storefront/` | Customer website (mobile first) | Not started |
-| [`hg-studio/`](hg-studio/README.md) | Staff web app, shown as **H-Global Studio** (Korean) | Sign-in, stream setup and live console built |
+| [`hg-studio/`](hg-studio/README.md) | Staff web app, shown as **H-Global Studio** (Korean) | Stream setup, live console, orders, products, after-stream screen and staff built |
 
 The apps talk to hg-server only through [`api/openapi.yaml`](api/openapi.yaml).
 

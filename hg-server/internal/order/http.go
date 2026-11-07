@@ -27,6 +27,8 @@ func (h *Handler) RegisterStudio(rt *httpx.Router) {
 	cs := rt.With(auth.RequireStaff(auth.RoleCS))
 	mgr := rt.With(auth.RequireStaff(auth.RoleManager))
 	cs.Handle("GET", "/orders", h.list)
+	cs.Handle("GET", "/orders/counts", h.counts)
+	cs.Handle("GET", "/shows/{id}/sales", h.showSales)
 	cs.Handle("GET", "/orders/events", h.events)
 	cs.Handle("GET", "/orders/{id}", h.get)
 	cs.Handle("GET", "/orders/{id}/media/{media_id}", h.media(false))
@@ -68,11 +70,35 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	list, err := h.Svc.List(r.Context(), statuses, limit, offset)
+	q := r.URL.Query().Get("q")
+	if len([]rune(q)) > 100 {
+		return apperr.Invalid("invalid_query", "q is up to 100 characters")
+	}
+	list, err := h.Svc.List(r.Context(), Filter{Statuses: statuses, Q: q, Limit: limit, Offset: offset})
 	if err != nil {
 		return err
 	}
 	return httpx.JSON(w, http.StatusOK, map[string]any{"items": nonNil(list)})
+}
+
+func (h *Handler) counts(w http.ResponseWriter, r *http.Request) error {
+	c, err := h.Svc.Counts(r.Context())
+	if err != nil {
+		return err
+	}
+	return httpx.JSON(w, http.StatusOK, map[string]any{"counts": c})
+}
+
+func (h *Handler) showSales(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpx.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	s, err := h.Svc.SalesForShow(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	return httpx.JSON(w, http.StatusOK, s)
 }
 
 func (h *Handler) events(w http.ResponseWriter, r *http.Request) error {

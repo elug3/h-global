@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError, api, call, errorText, type Capture, type RelayStatus } from "../api/client";
 import { useAuth } from "../auth";
@@ -9,7 +9,7 @@ import { Icon } from "../components/Icon";
 import { ErrorBanner, LivePill, StatusTag } from "../components/ui";
 import { t } from "../i18n/ko";
 import { clock } from "../lib/format";
-import { useEventStream, useInterval, useLoad, useNow } from "../lib/hooks";
+import { LIVE_EVENTS, useDebounced, useEventStream, useInterval, useLoad, useNow } from "../lib/hooks";
 
 /**
  * The live console (plan 6, screen 2): stream and capture, quick listing,
@@ -26,18 +26,14 @@ export function LiveConsole() {
   const [selected, setSelected] = useState<Capture>();
   const [capturedAt, setCapturedAt] = useState<number>();
   const [actionError, setActionError] = useState<string>();
-  const reloadTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const sh = show.data;
   const live = sh?.status === "live";
 
   // Any change to the show (a listing, a sale, a pin) reloads it; changes
   // that arrive together are merged into one reload.
-  const scheduleReload = () => {
-    clearTimeout(reloadTimer.current);
-    reloadTimer.current = setTimeout(() => void show.reload(), 300);
-  };
-  useEventStream(sh ? `/studio-api/shows/${id}/events` : undefined, sh?.last_event_id, scheduleReload, () => void show.reload());
+  const scheduleReload = useDebounced(() => void show.reload());
+  useEventStream(sh ? `/studio-api/shows/${id}/events` : undefined, sh?.last_event_id, LIVE_EVENTS, scheduleReload, () => void show.reload());
 
   useInterval(() => {
     if (!live || relayDisabled) return;
@@ -115,6 +111,11 @@ export function LiveConsole() {
       {!live && (
         <div className="banner">
           <span>{sh.status === "ended" ? t.console.ended : t.console.notLive}</span>
+          {sh.status === "ended" && (
+            <Link className="btn btn-primary btn-sm" to={`/shows/${id}/after`}>
+              {t.after.openAfter}
+            </Link>
+          )}
           {(sh.status === "draft" || sh.status === "scheduled") && can("cs") && (
             <button className="btn btn-live btn-sm" onClick={() => void transition("start")}>
               {t.setup.start}

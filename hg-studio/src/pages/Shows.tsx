@@ -80,6 +80,11 @@ export function Shows() {
               <Link className="btn btn-secondary btn-sm" to={`/shows/${sh.id}/setup`}>
                 {t.shows.openSetup}
               </Link>
+              {(sh.status === "live" || sh.status === "ended") && (
+                <Link className="btn btn-secondary btn-sm" to={`/shows/${sh.id}/after`}>
+                  {t.after.openAfter}
+                </Link>
+              )}
               {(sh.status === "live" || sh.status === "scheduled" || sh.status === "draft") && (
                 <Link className={"btn btn-sm " + (sh.status === "live" ? "btn-live" : "btn-primary")} to={`/shows/${sh.id}/live`}>
                   {t.shows.openConsole}
