@@ -13,7 +13,7 @@
 > v3: the system is **three programs**: `hg-server`, `storefront` and `hg-studio` (section 3).
 > v4: the broadcast goes **through hg-server's media relay to YouTube**, so frames reach the agent
 > and the CS rep before YouTube (5.5, 5.6).
-> v7: decisions D1, D2 (on hold), D3 and D7 recorded; sign-in (7.1) and hosting (7.2) added.
+> v7: decisions D1, D2 (on hold), D3 (email only for now) and D7 recorded; sign-in (7.1) and hosting (7.2) added.
 > v5: the agent runs as its own process, **hg-agent** (`hg-server --agent`), which perceives;
 > hg-server keeps every decision (5.6).
 
@@ -116,7 +116,7 @@ The recommendation is in the second column.
 |---|---|---|---|
 | D1 | Where are customers, and in what currency do they pay? | **Decided 2026-11-07: buyers are in Korea and pay in won (KRW).** | Korean addresses with postcode search, Korean phone numbers, and the personal customs code (PCCC) for goods bought abroad. The Figma checkout's US address must change. |
 | D2 | Payment provider | **On hold until the business operator's permit is granted.** hg-server keeps the fake provider behind `payment.Provider`. When the permit arrives, choose a Korean PG with card and virtual-account (가상계좌) payments and a deposit webhook; the adapter is about a week of work. | Real sales cannot start before this. A virtual account per order removes the manual deposit checking from the meeting, and the merchant name keeps the owner's name off payments. |
-| D3 | How customers sign in | **Decided 2026-11-07: Kakao login, phone number (SMS code) and email.** One customer account can hold all three (7.1). Browsing needs no account; checkout does. | Live viewers arrive from YouTube on their phones, so one-tap Kakao and phone sign-in matter. Sending SMS and reading the phone number from Kakao both need business registration, so those may also wait for the permit (7.1). |
+| D3 | How customers sign in | **Decided 2026-11-07: email only for now** (built). Kakao login and phone number (SMS code) come later, probably after the business permit (7.1). Browsing needs no account; checkout does. | Email works without any outside service. Kakao and SMS both need provider accounts, and SMS sender registration and Kakao's phone-number access need business registration. |
 | D4 | When is a one-of-a-kind item held for the buyer? | **At "Buy now" / start of checkout, for 10 minutes.** | Two viewers will press Buy on the same bag in the same second. Holding at Buy now means the one who gets it can finish the address and customs steps without losing it. The Figma checkout already shows this timer. |
 | D5 | Quantity unknown on location | **Stock mode "until sold out"**: no count, sellable until the CS rep marks it sold out. Ask for a count whenever one is known. | It's our own model, so no fake ceiling is needed. The risk is overselling; the console shows orders arrive per item so the CS rep can stop in time. |
 | D6 | Days on sale after a stream | **Setting per stream, default 3.** Items are hidden, not deleted, and can be kept permanently. | From the meeting; the number of days was not decided. |
@@ -652,7 +652,11 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 - **notify**: Telegram alerts for staff (new order, paid, listing failed, stream started), email to
   customers (order paid, shipped, chat reply). Kakao messages are Phase 3.
 
-### 7.1 Customer sign-in: Kakao, phone, email (D3)
+### 7.1 Customer sign-in: email now, Kakao and phone later (D3)
+
+**Now:** email and password only (built: `/api/auth/register`, `/api/auth/login`). **Later**
+(on hold, 2026-11-07): Kakao and phone, designed below so adding them does not change existing
+accounts.
 
 One customer can have several **identities**; any of them signs in to the same account.
 
@@ -780,8 +784,7 @@ involved:
 - **Checkout** (D1 decided): Korean address with postcode search (the free Kakao/Daum postcode
   widget in storefront), a Korean mobile number, and the customs number field. Replace the US
   address in Figma. The 10-minute hold timer already matches D4.
-- **Sign-in** (D3): one screen with Kakao, phone number and email; the account page lists linked
-  methods.
+- **Sign-in** (D3): email and password for now. Leave room on the screen for Kakao and phone later.
 - **Quick listing**: the Color and Size chips should come from recently used labels with a "+ Add"
   for new ones (4.2). Hex is optional, and two-tone uses two hex values on one option value, which
   matches the components board.
