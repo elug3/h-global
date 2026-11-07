@@ -45,7 +45,12 @@ feed; the four jobs.
 - Jobs run one at a time from one scheduler (running them in parallel could exhaust the connection
   pool).
 
-**Not built yet:** media relay and frame ring buffer (5.5), YouTube Data API, hg-agent (5.6),
+**Broadcast relay prototype (2026-11-07):** built with ffmpeg instead of a separate media server,
+with an MJPEG preview instead of WebRTC. Frames reach hg-server about 0.5 s after the camera in
+local tests; see [docs/prototype/relay.md](../prototype/relay.md) for results, differences from
+5.5 and how to measure on H-Global's server.
+
+**Not built yet:** YouTube Data API, hg-agent (5.6),
 notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
 the internal API, storefront and hg-studio.
 
