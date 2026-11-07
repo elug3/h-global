@@ -14,8 +14,8 @@ import (
 // Filter narrows the staff order list.
 type Filter struct {
 	Statuses []string
-	// Q matches the order number or recipient (substring), or the phone
-	// number when it has at least three digits.
+	// Q matches the order number (with or without hyphens) or recipient
+	// (substring), or the phone number when it has at least three digits.
 	Q      string
 	Limit  int
 	Offset int
@@ -52,7 +52,9 @@ func (f Filter) where() (string, []any) {
 	}
 	if q := strings.TrimSpace(f.Q); q != "" {
 		like := arg("%" + likeEscape(q) + "%")
-		or := []string{"number ILIKE " + like, "shipping->>'recipient' ILIKE " + like}
+		// Order numbers match with or without their hyphens (HG-261107-00042, 26110700042).
+		num := arg("%" + likeEscape(strings.ReplaceAll(q, "-", "")) + "%")
+		or := []string{"replace(number, '-', '') ILIKE " + num, "shipping->>'recipient' ILIKE " + like}
 		if d := digitsOf(q); len(d) >= 3 {
 			or = append(or, `regexp_replace(shipping->>'phone', '\D', '', 'g') LIKE `+arg("%"+d+"%"))
 		}

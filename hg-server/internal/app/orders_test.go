@@ -1,9 +1,19 @@
 package app_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/url"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/elug3/h-global/hg-server/internal/account"
+	"github.com/elug3/h-global/hg-server/internal/catalog"
+	"github.com/elug3/h-global/hg-server/internal/order"
 )
 
 var buyers int
@@ -124,5 +134,89 @@ func TestOrderSearchCountsAndShowSales(t *testing.T) {
 	}
 	if r := search("", "paid,pending_payment"); len(r) != 6 {
 		t.Errorf("by status: %d", len(r))
+	}
+}
+
+func TestOrderNumbersCountPerDay(t *testing.T) {
+	a, base := setup(t)
+	ctx := context.Background()
+	cust, err := a.Account.Register(ctx, account.NewCustomer{Email: "n@example.com", Password: "n-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.Catalog.Create(ctx, catalog.NewProduct{Title: "Bag", PriceWon: 1000, Stock: catalog.NewStock{Mode: "counted", Qty: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOrder := func() order.NewOrder {
+		return order.NewOrder{
+			CustomerID:    cust.ID,
+			Lines:         []order.Line{{ProductID: p.ID, VariantID: p.Variants[0].ID, Title: "Bag", UnitPriceWon: 1000, Qty: 1}},
+			Shipping:      order.Shipping{Recipient: "N", Phone: "010", Postcode: "1", Address1: "Seoul"},
+			PaymentMethod: "card", Deadline: time.Now().Add(time.Hour),
+		}
+	}
+	today := time.Now().In(time.FixedZone("KST", 9*3600)).Format("060102") // Korea has no daylight saving
+
+	// Yesterday was busy; today still starts from 00001.
+	if _, err := a.DB.Pool.Exec(ctx,
+		`INSERT INTO order_number_days (day, last) VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date - 1, 500)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ten orders at once: every number is different, and the day counts 1 to 10.
+	const n = 10
+	numbers := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			o, err := a.Orders.Create(ctx, newOrder())
+			numbers[i], errs[i] = o.Number, err
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(numbers)
+	for i, got := range numbers {
+		if want := fmt.Sprintf("HG-%s-%05d", today, i+1); got != want {
+			t.Fatalf("number %d = %s, want %s (all: %v)", i, got, want, numbers)
+		}
+	}
+
+	// A rolled-back order gives its count back: no gaps.
+	rollback := errors.New("rollback")
+	err = a.DB.InTx(ctx, func(ctx context.Context) error {
+		if _, err := a.Orders.Create(ctx, newOrder()); err != nil {
+			return err
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("rollback: %v", err)
+	}
+	o, err := a.Orders.Create(ctx, newOrder())
+	if err != nil || o.Number != fmt.Sprintf("HG-%s-%05d", today, 11) {
+		t.Fatalf("after rollback: %s %v", o.Number, err)
+	}
+
+	// Staff find it with or without the hyphens.
+	staff := newClient(t, base)
+	staff.do("POST", "/studio-api/auth/login", obj{"email": "owner@hglobal.test", "password": "owner-password"}, 200, nil)
+	for _, q := range []string{o.Number, strings.ReplaceAll(strings.TrimPrefix(o.Number, "HG-"), "-", ""), "hg-" + today} {
+		var res obj
+		staff.do("GET", "/studio-api/orders?q="+url.QueryEscape(q), nil, 200, &res)
+		items := res["items"].([]any)
+		found := false
+		for _, it := range items {
+			found = found || it.(obj)["number"] == o.Number
+		}
+		if !found {
+			t.Errorf("search %q did not find %s (%d results)", q, o.Number, len(items))
+		}
 	}
 }

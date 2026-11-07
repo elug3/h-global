@@ -204,6 +204,9 @@ PostgreSQL `LISTEN/NOTIFY` fan-out (plan 5.3).
 3. `POST /api/checkout/{id}/pay` creates the pending order (the holds move with it) and a pending
    payment in one transaction, then asks the provider to start it. Card: send the customer to
    `payment.redirect_url`. Virtual account: show `payment.virtual_account`.
+   The order number is `HG-YYMMDD-XXXXX`: the date in Korea time and the day's count from 00001
+   (`HG-261107-00042`). The count comes from one row per day in `order_number_days`, taken in the
+   order's transaction, so numbers have no gaps and are never shared.
 4. The provider's webhook (`POST /hooks/payments/{provider}`) is signature-checked and recorded in
    `webhook_receipts`, so repeats do nothing. On success the order becomes `paid` and the holds
    become sold, in one transaction.
@@ -212,8 +215,8 @@ PostgreSQL `LISTEN/NOTIFY` fan-out (plan 5.3).
    `…/inspection/complete` → `…/customs-check` (requires a valid PCCC) → `…/ship` → `…/deliver`.
    The customer confirms receipt (`POST /api/orders/{id}/receipt`).
 7. Cancel: the provider refunds first, then the order changes.
-8. Staff lists: `GET /studio-api/orders?status=paid,inspecting&q=…` (q matches the order number or
-   recipient, or 3+ digits of the phone) and `GET /studio-api/orders/counts` (orders per status).
+8. Staff lists: `GET /studio-api/orders?status=paid,inspecting&q=…` (q matches the order number,
+   with or without hyphens, or the recipient, or 3+ digits of the phone) and `GET /studio-api/orders/counts` (orders per status).
 
 **Sales per stream** (`GET /studio-api/shows/{id}/sales`, for Studio's after-stream screen): an order
 line counts for a stream when its product is one of the stream's items, the order was placed after
@@ -251,6 +254,7 @@ go vet ./...
 | Test | Covers |
 |---|---|
 | `internal/app` `TestLiveStreamToDelivery` | The plan's end-to-end flow over HTTP: go live, viewer stream, capture, quick listing, two buyers racing for one unit, pay, inspect, customs check, ship, deliver, receipt, replay links, recap |
+| `internal/app` `TestOrderNumbersCountPerDay` | `HG-YYMMDD-XXXXX` numbers: ten orders at once get 00001–00010, a rolled-back order leaves no gap, the count is per day, search with or without hyphens |
 | `internal/app` `TestOrderSearchCountsAndShowSales` | Order search and status counts; sales per stream, including an order before the stream, a canceled one, an unpaid one and the same product in a later stream |
 | `internal/app` `TestPaidCancelRefundsAndReturnsStock`, `TestAccessRules` | Refund and stock return; roles, session separation, cross-site origin check |
 | `internal/app` `TestRoutesMatchOpenAPI` | Every route is in `api/openapi.yaml` and nothing extra is documented |

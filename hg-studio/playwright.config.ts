@@ -17,6 +17,7 @@ export default defineConfig({
     baseURL: STUDIO,
     viewport: { width: 1440, height: 900 },
     locale: "ko-KR",
+    timezoneId: "Asia/Seoul", // like staff in Korea; order numbers carry the Korean date
     trace: "off",
   },
   webServer: [

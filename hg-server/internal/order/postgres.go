@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -36,15 +37,31 @@ func scanOrder(row pgx.Row) (Order, error) {
 	return o, err
 }
 
+// nextNumber returns the next order number, HG-YYMMDD-XXXXX: today's date in
+// Korea time and the day's count from 00001 (more than 99,999 orders in a day
+// would give six digits). It must run in the order's transaction: the day's
+// row stays locked until commit, and a rollback gives the count back.
+func (p Postgres) nextNumber(ctx context.Context) (string, error) {
+	var day time.Time
+	var n int
+	err := p.DB.Q(ctx).QueryRow(ctx,
+		`INSERT INTO order_number_days (day, last) VALUES ((now() AT TIME ZONE 'Asia/Seoul')::date, 1)
+		 ON CONFLICT (day) DO UPDATE SET last = order_number_days.last + 1
+		 RETURNING day, last`).Scan(&day, &n)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("HG-%s-%05d", day.Format("060102"), n), nil
+}
+
 func (p Postgres) insert(ctx context.Context, n NewOrder, subtotal int64) (uuid.UUID, error) {
 	q := p.DB.Q(ctx)
 	id := ids.New()
 	ship, _ := json.Marshal(n.Shipping)
-	var seq int64
-	if err := q.QueryRow(ctx, `SELECT nextval('order_number_seq')`).Scan(&seq); err != nil {
+	number, err := p.nextNumber(ctx)
+	if err != nil {
 		return uuid.Nil, err
 	}
-	number := fmt.Sprintf("HG%07d", seq)
 	if _, err := q.Exec(ctx,
 		`INSERT INTO orders (id, number, customer_id, status, subtotal_won, shipping_fee_won, total_won, shipping,
 		                     payment_method, payment_deadline)

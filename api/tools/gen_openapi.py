@@ -132,7 +132,7 @@ schemas = {
            "the order was placed after the stream started, and no later stream with the same product had started. "
            "Amounts are line totals without shipping. Items without orders are left out."),
   "Order": obj({
-      "id": UUID, "number": S("e.g. HG0000001."), "customer_id": UUID,
+      "id": UUID, "number": S("HG-YYMMDD-XXXXX: the order date in Korea time and the day's count from 00001, e.g. HG-261107-00042."), "customer_id": UUID,
       "status": S(enum=["pending_payment", "paid", "inspecting", "customs_check", "shipped", "delivered", "completed", "canceled"]),
       "subtotal_won": WON, "shipping_fee_won": WON, "total_won": WON, "refunded_won": WON, "shipping": ref("Shipping"),
       "payment_method": S(enum=["card", "virtual_account"]), "payment_deadline": TIME, "paid_at": nullable(TIME),

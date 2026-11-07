@@ -107,7 +107,7 @@ test("orders from a stream, then the after-stream screen, products and staff", a
   await page.getByRole("button", { name: "검색" }).click();
   await expect(rows).toHaveCount(1);
   await rows.first().getByRole("link").click();
-  await expect(page.getByRole("heading", { name: /^주문 HG/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^주문 HG-\d{6}-\d{5}$/ })).toBeVisible();
   const status = page.locator(".page-head .tag");
   const next = page.getByTestId("next-step");
   await expect(status).toHaveText("결제 완료");
