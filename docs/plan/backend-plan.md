@@ -1,6 +1,7 @@
-# H-Global Backend Plan (draft v2)
+# H-Global Backend Plan (draft v3)
 
-> Status: draft for discussion, 2026-11-07. Nothing is built yet.
+> Status: draft for discussion, 2026-11-07. Nothing is built yet. Covers hg-server and how
+> storefront and hg-studio connect to it.
 > Builds on: the live commerce plan (`docs/plan/livestream-commerce-plan.md` on branch
 > `claude/h-global-livestream-plan-tj066k`) and the UI design draft in Figma
 > ([H-Global UI — Design draft](https://www.figma.com/design/vNXgKEBXrTOleCbgKOqD4G)).
@@ -8,16 +9,20 @@
 > v2: H-Global is **its own service, separate from Dupli1**, built as a **monolith**. Products are
 > created on the spot during a stream; nothing has to be prepared in advance. v1 (built on Dupli1's
 > microservices) is replaced.
+> v3: the system is **three programs**: `hg-server`, `storefront` and `hg-studio` (section 3).
 
 ## 1. Summary
 
-H-Global is one Go program with one PostgreSQL database and one object-storage bucket. It serves:
+H-Global is three programs:
 
-- the **storefront** API (home, live page, product page, cart, checkout, account, 1:1 chat), and
-- the **H-Global Studio** API (stream setup, live console, quick listing, orders, chat inbox),
+| Program | What it is | Who uses it |
+|---|---|---|
+| **hg-server** | The Go monolith: all business rules, one PostgreSQL database, one object-storage bucket, background jobs. The only program that touches the database. | storefront and hg-studio, through its HTTP API |
+| **storefront** | The customer website: home, live page, product page, cart, checkout, account, 1:1 chat. Mobile first. | Viewers and buyers |
+| **hg-studio** | The staff web app, shown to users as **H-Global Studio**: stream setup, live console, quick listing, orders, chat inbox. Desktop only. | Host, CS reps, managers |
 
-and runs its background jobs (hold expiry, unpaid-order cancel, auto-hide after a stream, YouTube
-polling) in the same process.
+hg-server also runs its background jobs (hold expiry, unpaid-order cancel, auto-hide after a stream,
+YouTube polling) in the same process.
 
 The main difference from Dupli1 is the product model. **Dupli1 needs brands, styles, colors, sizes
 and SKU codes prepared before a product can exist. H-Global creates a product from a captured frame
@@ -25,10 +30,11 @@ and a price.** Options such as color and size are typed or picked from recently 
 listing time, and everything else can be filled in after the stream.
 
 ```
- Storefront (web) ──┐                       ┌── H-Global Studio (staff web)
-                    │ REST + SSE            │ REST + SSE
-              ┌─────▼───────────────────────▼─────┐
-              │          hglobal (one binary)     │
+   storefront ───────┐                     ┌─────── hg-studio
+  (customer web)     │ /api  REST + SSE    │ /studio-api  REST + SSE
+                     │                     │   (H-Global Studio, staff web)
+              ┌──────▼─────────────────────▼──────┐
+              │        hg-server (one binary)     │
               │ ┌───────┐ ┌───────┐ ┌──────────┐  │
               │ │catalog│ │ live  │ │ checkout │  │     YouTube Data API
               │ └───────┘ └───────┘ └──────────┘  │ ──▶ (start time, viewers)
@@ -36,7 +42,7 @@ listing time, and everything else can be filled in after the stream.
               │ │ order │ │payment│ │ support  │  │ ──▶ Payment provider
               │ └───────┘ └───────┘ └──────────┘  │     (card, virtual account)
               │ ┌───────┐ ┌───────┐ ┌──────────┐  │
-              │ │account│ │ media │ │  notify  │  │ ──▶ Email / Telegram / Kakao
+              │ │account│ │ jobs  │ │  notify  │  │ ──▶ Email / Telegram / Kakao
               │ └───────┘ └───────┘ └──────────┘  │
               │  platform: http · auth · sse hub · jobs · events
               └──────┬──────────────────────┬─────┘
@@ -69,14 +75,36 @@ The recommendation is in the second column.
 | D4 | When is a one-of-a-kind item held for the buyer? | **At "Buy now" / start of checkout, for 10 minutes.** | Two viewers will press Buy on the same bag in the same second. Holding at Buy now means the one who gets it can finish the address and customs steps without losing it. The Figma checkout already shows this timer. |
 | D5 | Quantity unknown on location | **Stock mode "until sold out"**: no count, sellable until the CS rep marks it sold out. Ask for a count whenever one is known. | It's our own model, so no fake ceiling is needed. The risk is overselling; the console shows orders arrive per item so the CS rep can stop in time. |
 | D6 | Days on sale after a stream | **Setting per stream, default 3.** Items are hidden, not deleted, and can be kept permanently. | From the meeting; the number of days was not decided. |
-| D7 | Hosting | **Confirm.** One container + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
+| D7 | Hosting | **Confirm.** Three containers (section 3.4) + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
+| D8 | Web stack for storefront and hg-studio | **TypeScript + React Router**, the stack Dupli1's web apps already use: storefront server-rendered, hg-studio as a single-page app. | The team already knows it. The storefront needs server rendering so product and recap links show a title, price and photo when shared on KakaoTalk; hg-studio sits behind a login and needs none. |
 
-## 3. Code layout
+## 3. Programs and code layout
 
-One Go module in this repository.
+### 3.1 Repository layout
+
+All three programs live in this repository, so a feature that touches the API and both apps is one
+pull request.
 
 ```
-cmd/hglobal/main.go        # starts the HTTP server and the job runner (flags: --jobs, --http)
+h-global/
+  hg-server/            # Go module: the monolith
+  storefront/           # customer web app (TypeScript, React Router, server-rendered)
+  hg-studio/            # staff web app (TypeScript, React Router, single-page app)
+  api/openapi.yaml      # the HTTP contract between hg-server and the two apps
+  deploy/               # docker-compose, reverse proxy config, environment examples
+  docs/
+```
+
+`api/openapi.yaml` is the single source of the API. hg-server's handlers are checked against it in
+tests, and both apps generate their TypeScript client from it, so a changed field breaks the build
+instead of breaking the page.
+
+### 3.2 hg-server layout
+
+Inside `hg-server/`:
+
+```
+cmd/hg-server/main.go      # starts the HTTP server and the job runner (flags: --jobs, --http)
 internal/
   platform/                # shared plumbing, no business rules
     config/  db/  httpx/  auth/  sse/  jobs/  events/  storage/  ids/  clock/
@@ -106,6 +134,43 @@ Rules that keep the monolith tidy:
    same transaction, delivered to in-process subscribers and the live feed after commit.
 5. **Every service is tested with an in-memory store**; Postgres tests run when `DATABASE_URL` is set.
 
+### 3.3 How the programs talk
+
+hg-server exposes **two API surfaces**, one per app, so a customer session can never reach a staff
+route even by mistake:
+
+| Surface | Used by | Session | Contents |
+|---|---|---|---|
+| `/api/…` | storefront | customer cookie `hg_session` | shows, products, cart, checkout, orders, account, chat, SSE feeds |
+| `/studio-api/…` | hg-studio | staff cookie `hg_staff_session` + role check | stream setup, live console, quick listing, catalog editing, orders, refunds, chat inbox, staff SSE |
+| `/hooks/…` | payment provider | signature check | payment and deposit webhooks |
+
+- **No tokens in the browser.** Each app serves its pages and **proxies its own API path to
+  hg-server** on the same origin (storefront `/api/*`, hg-studio `/studio-api/*`). Cookies stay
+  first-party and HttpOnly, and no cross-origin (CORS) setup is needed.
+- **SSE goes through the same proxy.** The app's proxy must pass `text/event-stream` through without
+  buffering.
+- **storefront renders on the server** for the home, live, product and recap pages, calling
+  hg-server from its own server, so shared links carry Open Graph tags (title, price, photo).
+- **hg-studio** is a single-page app served as static files by a small server that also does the
+  proxying. Its capture feature (`getDisplayMedia`) needs HTTPS and a desktop browser.
+- The apps hold **no business rules**. Prices, stock, numbering and order status are decided by
+  hg-server only.
+
+### 3.4 Deployment
+
+| Container | Public address (example) | Talks to |
+|---|---|---|
+| `storefront` | `hglobal.example` | hg-server (internal network) |
+| `hg-studio` | `studio.hglobal.example` | hg-server (internal network) |
+| `hg-server` | not public, except `/hooks/*` for the payment provider | PostgreSQL, object storage, YouTube, payment provider, email, Telegram |
+
+- One reverse proxy (TLS) in front routes the two domains and `/hooks/*`.
+- hg-server can be started twice from the same image (`--http` only and `--jobs` only) if the job
+  runner ever needs to be separated. One process running both is the default.
+- hg-studio can additionally be limited to staff networks or put behind an access gateway, since
+  only staff use it.
+
 ## 4. Product model: spontaneous listing
 
 ### 4.1 What a product is
@@ -124,7 +189,7 @@ buyable and visible.
 ### 4.2 Keeping data consistent without masters
 
 - **Suggestions, not masters.** When the CS rep types a color or size, Studio suggests the labels
-  used most in the last 90 days (`GET /studio/catalog/suggestions?option=Color`). Picking one reuses
+  used most in the last 90 days (`GET /studio-api/catalog/suggestions?option=Color`). Picking one reuses
   its label and swatch color, so "Brown" stays one spelling with one hex.
 - **Swatch colors are optional.** Without a hex, the swatch shows the label as a chip.
 - **Details later.** `details_complete` is false until a title, description and specs are filled in.
@@ -163,10 +228,10 @@ available = unlimited until marked sold out          (stock_mode = until_sold_ou
 Target: under 60 seconds from capture to a buyable item; the server's share under 1 second.
 
 ```
-Studio                                  hglobal
-  │ POST /studio/shows/{id}/captures ──▶ save frame to storage, compute broadcast offset
+hg-studio                               hg-server
+  │ POST /studio-api/shows/{id}/captures ▶ save frame to storage, compute broadcast offset
   │ ◀── capture (+ match suggestions, Phase 2)
-  │ POST /studio/shows/{id}/items/quick (Idempotency-Key)
+  │ POST /studio-api/shows/{id}/items/quick (Idempotency-Key)
   │      { capture_id, crop, price, title?, options[], stock }
   │                                    ├─ save cropped photo to storage   (before the transaction)
   │                                    └─ one transaction:
@@ -265,8 +330,9 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 ## 7. Accounts, chat, notifications
 
 - **account**: customers (Kakao / email sign-in), staff (roles `owner`, `manager`, `cs`), saved
-  addresses with an optional customs number. Sessions are HttpOnly cookies held by the server, not
-  tokens in the browser. Staff and customers use separate cookies and sign-in pages.
+  addresses with an optional customs number. Sessions are HttpOnly cookies held by hg-server, not
+  tokens in the browser. Customers sign in on storefront, staff on hg-studio, with separate cookies
+  and separate API surfaces (3.3).
 - **Roles** decide Studio access: `cs` can run the live console, list items, answer chat and move
   orders through inspection; `manager` adds refunds, stream setup and settings; `owner` adds staff
   management.
@@ -277,16 +343,17 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 
 ## 8. API outline
 
-Storefront under `/api/`, Studio under `/api/studio/` (staff session required).
+storefront calls `/api/…`, hg-studio calls `/studio-api/…` (staff session and role required). Paths
+below are relative to those prefixes. The full contract lives in `api/openapi.yaml`.
 
-| Area | Storefront | Studio |
+| Area | storefront → `/api` | hg-studio → `/studio-api` |
 |---|---|---|
 | Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick`, `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
 | Catalog | `GET /products`, `GET /products/{id}` (incl. broadcasts and inspection media) | `PATCH /products/{id}`, options, variants, stock, media upload, `GET /catalog/suggestions`, `GET /catalog/incomplete` |
 | Checkout | `GET/PUT /cart`, `POST /checkout` (Buy now / from cart, takes holds), `POST /checkout/{id}/pay` | — |
 | Orders | `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel` | `GET /orders`, `POST /orders/{id}/inspection`, `/customs-check`, `/ship`, `/deliver`, `/refund`, `GET /orders/events` (SSE) |
-| Payment | `POST /payments/webhook/{provider}` (provider only) | `GET /payments`, refunds via orders |
-| Account | `POST /auth/kakao`, `/auth/email`, `GET/PUT /me`, addresses | `POST /studio/auth/login`, staff management |
+| Payment | — (provider webhooks arrive at `/hooks/payments/{provider}`) | `GET /payments`, refunds via orders |
+| Account | `POST /auth/kakao`, `/auth/email`, `GET/PUT /me`, addresses | `POST /auth/login`, staff management |
 | Support | `GET/POST /support/messages`, `GET /support/events` (SSE) | `GET /support/conversations`, reply, close, `GET /support/events` (SSE) |
 
 ## 9. Data (one PostgreSQL database)
@@ -321,21 +388,28 @@ Migrations are plain SQL files in `migrations/`, applied in order on startup and
 
 ## 11. Phases
 
-| Phase | Scope |
-|---|---|
-| **0 — Decide** (with the 11/08 design review) | Answer D1–D7. Agree this plan. |
-| **1 — MVP** (about 5–7 weeks) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock and media. Live: shows, preselected No. 1–8, capture, quick listing, pin, sold out, SSE feed, YouTube offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. |
-| **2 — Match and follow up** (about 3–4 weeks) | Image matching to existing products (pgvector); recap page and KakaoTalk share link; completion list; console stats per show; 1:1 chat; inspection media on the product page. |
-| **3 — Later** | Kakao login if not in MVP, Kakao messages, stream reminders, YouTube chat, customs number lookup, reviews, analytics per item. |
+| Phase | hg-server | storefront | hg-studio |
+|---|---|---|---|
+| **0 — Decide** (with the 11/08 design review) | Answer D1–D8. Agree this plan and `api/openapi.yaml` v0. | Design draft approved | Design draft approved |
+| **1 — MVP** (about 6–8 weeks; the apps are built alongside hg-server against the contract and a mock server) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock, media. Live: shows, preselected No. 1–8, capture, quick listing, pin, sold out, SSE feed, YouTube offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. | Home (live banner, next stream), live page with SSE, product sheet and page, cart, checkout with hold timer and customs number, sign-in, order history. | Sign-in, stream setup, live console (capture, quick listing, published list, pin, sold out), order handling (inspection, customs check, ship, refund), product editing. |
+| **2 — Match and follow up** (about 3–4 weeks) | Image matching (pgvector); recap; completion list; console stats per show; 1:1 chat; inspection media on the product page. | Recap page, chat, inspection section on the product page. | Match suggestions in quick listing, after-stream screen, chat inbox, console stats. |
+| **3 — Later** | Kakao messages, stream reminders, YouTube chat, customs number lookup, reviews, analytics per item. | Reminders, reviews. | Analytics. |
 
-Suggested build order inside Phase 1:
+Suggested build order inside Phase 1. Each step ends with something working across the programs
+involved:
 
-1. Platform skeleton, migrations, staff sign-in, roles.
-2. Catalog: products, options, variants, stock, media upload.
-3. Live: shows, preselected items, captures, quick listing in one transaction.
-4. Events, SSE hub, in-memory show snapshot, stock-change push.
-5. Checkout and holds; orders; payment provider adapter and webhook; hold and unpaid-order jobs.
-6. YouTube adapter, auto-hide job, Telegram and email; end-to-end test.
+1. **Skeleton:** the three programs start under `docker compose`; storefront and hg-studio proxy to
+   hg-server; `api/openapi.yaml` v0 and generated clients; migrations; staff sign-in in hg-studio.
+2. **Catalog:** products, options, variants, stock and media in hg-server; product editing in
+   hg-studio; product page in storefront.
+3. **Live listing:** shows, preselected items, captures and quick listing in hg-server; stream setup
+   and the live console in hg-studio.
+4. **Live feed:** events, SSE hub, in-memory show snapshot and stock push in hg-server; the live page
+   in storefront updates without reload.
+5. **Buying:** checkout and holds, orders, payment adapter and webhook, hold and unpaid-order jobs in
+   hg-server; cart and checkout in storefront; order handling in hg-studio.
+6. **Finish:** YouTube adapter, auto-hide job, Telegram and email; one end-to-end test that runs a
+   stream in hg-studio, buys the item in storefront and ships it.
 
 ## 12. Design follow-ups
 
