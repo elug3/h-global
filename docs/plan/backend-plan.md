@@ -1,4 +1,4 @@
-# H-Global Backend Plan (draft v6)
+# H-Global Backend Plan (draft v7)
 
 > Status: 2026-11-07. Phase 1 core of hg-server is built (see "Implementation status" below and
 > [hg-server/README.md](../../hg-server/README.md)). Covers hg-server and how storefront and hg-studio
@@ -13,6 +13,7 @@
 > v3: the system is **three programs**: `hg-server`, `storefront` and `hg-studio` (section 3).
 > v4: the broadcast goes **through hg-server's media relay to YouTube**, so frames reach the agent
 > and the CS rep before YouTube (5.5, 5.6).
+> v7: decisions D1, D2 (on hold), D3 and D7 recorded; sign-in (7.1) and hosting (7.2) added.
 > v5: the agent runs as its own process, **hg-agent** (`hg-server --agent`), which perceives;
 > hg-server keeps every decision (5.6).
 
@@ -113,13 +114,13 @@ The recommendation is in the second column.
 
 | # | Question | Recommendation | Why it matters |
 |---|---|---|---|
-| D1 | Where are customers, and in what currency do they pay? | **Confirm.** The customs-number step in the meeting (order → inspection → customs number → shipping) is Korea's personal customs code (PCCC, `P` + 12 digits), used by buyers **in Korea** receiving goods from abroad. If so: KRW, Korean addresses. | Decides currency, payment provider, address format and shipping. The Figma checkout shows a US address, which should change if buyers are in Korea. |
-| D2 | Payment provider | **Pick one Korean PG offering card and virtual-account (가상계좌) payments** with a deposit webhook. | The meeting's pain point is confirming bank deposits by hand. A virtual account per order reports the deposit automatically. The merchant name on the account also settles the "keep the owner's name off payments" concern. |
-| D3 | How customers sign in | **Kakao login plus email.** Allow browsing and cart without an account, but ask for sign-in at checkout. | Live viewers arrive from YouTube on their phones, so one-tap sign-in matters. Sign-in at checkout gives chat, order history and the customs number a home. Guest checkout is possible later. |
+| D1 | Where are customers, and in what currency do they pay? | **Decided 2026-11-07: buyers are in Korea and pay in won (KRW).** | Korean addresses with postcode search, Korean phone numbers, and the personal customs code (PCCC) for goods bought abroad. The Figma checkout's US address must change. |
+| D2 | Payment provider | **On hold until the business operator's permit is granted.** hg-server keeps the fake provider behind `payment.Provider`. When the permit arrives, choose a Korean PG with card and virtual-account (가상계좌) payments and a deposit webhook; the adapter is about a week of work. | Real sales cannot start before this. A virtual account per order removes the manual deposit checking from the meeting, and the merchant name keeps the owner's name off payments. |
+| D3 | How customers sign in | **Decided 2026-11-07: Kakao login, phone number (SMS code) and email.** One customer account can hold all three (7.1). Browsing needs no account; checkout does. | Live viewers arrive from YouTube on their phones, so one-tap Kakao and phone sign-in matter. Sending SMS and reading the phone number from Kakao both need business registration, so those may also wait for the permit (7.1). |
 | D4 | When is a one-of-a-kind item held for the buyer? | **At "Buy now" / start of checkout, for 10 minutes.** | Two viewers will press Buy on the same bag in the same second. Holding at Buy now means the one who gets it can finish the address and customs steps without losing it. The Figma checkout already shows this timer. |
 | D5 | Quantity unknown on location | **Stock mode "until sold out"**: no count, sellable until the CS rep marks it sold out. Ask for a count whenever one is known. | It's our own model, so no fake ceiling is needed. The risk is overselling; the console shows orders arrive per item so the CS rep can stop in time. |
 | D6 | Days on sale after a stream | **Setting per stream, default 3.** Items are hidden, not deleted, and can be kept permanently. | From the meeting; the number of days was not decided. |
-| D7 | Hosting | **Confirm.** Five containers (section 3.4: the three programs, the media relay and hg-agent) + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
+| D7 | Hosting | **Decided 2026-11-07: H-Global's own server.** Docker Compose on that machine: the apps, hg-server, PostgreSQL 18, the media relay, and a TLS proxy (7.2). Files on local disk, backed up off the machine. | Needs the server's details (7.2) before the first deployment. Upload bandwidth matters for the relay. |
 | D8 | Web stack for storefront and hg-studio | **TypeScript + React Router**, the stack Dupli1's web apps already use: storefront server-rendered, hg-studio as a single-page app. | The team already knows it. The storefront needs server rendering so product and recap links show a title, price and photo when shared on KakaoTalk; hg-studio sits behind a login and needs none. |
 | D9 | How the broadcast reaches YouTube | **Through hg-server's media relay** (5.5): one upload from location; the relay copies it to YouTube and taps frames and audio. A saved OBS profile that streams straight to YouTube is the fallback. | Frames arrive seconds before YouTube shows them and at full quality. The cost is that the relay must be up for YouTube to get the stream. Sending two uploads from the camera (one to YouTube, one to us) avoids that but doubles the uplink, which is often weak on location. |
 | D10 | May the agent publish by itself? | **No. It prepares a listing; a CS rep approves it with one tap** (5.6). Revisit after measuring accuracy. | A misheard price is a money error. Approval still cuts the rep's work from about 60 seconds to a few seconds per item. |
@@ -639,7 +640,7 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 
 ## 7. Accounts, chat, notifications
 
-- **account**: customers (Kakao / email sign-in), staff (roles `owner`, `manager`, `cs`), saved
+- **account**: customers (Kakao, phone or email sign-in, 7.1), staff (roles `owner`, `manager`, `cs`), saved
   addresses with an optional customs number. Sessions are HttpOnly cookies held by hg-server, not
   tokens in the browser. Customers sign in on storefront, staff on hg-studio, with separate cookies
   and separate API surfaces (3.3).
@@ -650,6 +651,54 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
   SSE to both sides. Replaces KakaoTalk for 1:1 questions. The Studio Chat tab is its inbox.
 - **notify**: Telegram alerts for staff (new order, paid, listing failed, stream started), email to
   customers (order paid, shipped, chat reply). Kakao messages are Phase 3.
+
+### 7.1 Customer sign-in: Kakao, phone, email (D3)
+
+One customer can have several **identities**; any of them signs in to the same account.
+
+| Method | How | Needs |
+|---|---|---|
+| **Kakao** | Kakao Login (OAuth). hg-server receives the Kakao user id and stores it as an identity. | A Kakao Developers app. Basic login works with a nickname only; reading the phone number or email from Kakao needs a verified business app, so that part may wait for the permit. |
+| **Phone** | Enter a Korean mobile number, receive a 6-digit code by SMS, enter it. | An SMS provider with a registered sender number, which needs business registration, so this may also wait for the permit. Until then a fake SMS provider logs the code (development only). |
+| **Email** | Email and password (built). | Nothing. Email verification can come later. |
+
+Rules:
+
+- **Table `customer_identities`** (`customer_id`, `provider` = kakao / phone / email, `subject`
+  = Kakao id, phone number in E.164 or email, `verified_at`), unique on (`provider`, `subject`).
+  Today's `customers.email` and password move into it.
+- **No automatic merging.** Signing in with Kakao never joins an existing account because an email or
+  phone happens to match; a signed-in customer adds another method from their account page (the new
+  identity is verified there first). This prevents someone from taking over an account through an
+  unverified email.
+- **The verified phone number** becomes the customer's contact number and is suggested at
+  checkout.
+- **Phone codes:** 6 digits, valid 3 minutes, 5 tries, only a hash stored; at most 5 codes per
+  number per hour and per IP. Table `phone_codes`.
+- **Provider interfaces** like payment: `KakaoAuth` and `SMSSender`, each with a fake for
+  development and tests, so the flows can be built and tested before the permit.
+
+### 7.2 Hosting on H-Global's server (D7)
+
+```
+Internet ── TLS proxy (Caddy: automatic HTTPS) ──┬── storefront   hglobal domain
+                                                 ├── hg-studio    studio. subdomain
+                                                 └── hg-server    /hooks only
+OBS ── SRT/RTMP ──▶ media-relay ──▶ YouTube
+hg-server ──▶ PostgreSQL 18, files on local disk (/data)
+nightly: pg_dump + files ──▶ off-machine backup
+```
+
+What we need to know about the server before the first deployment:
+
+| Item | Why |
+|---|---|
+| OS, CPU, RAM, free disk | Sizing; PostgreSQL 18 and the photo and video files live on it |
+| Public IPv4, open ports (80, 443, and the SRT/RTMP port) | TLS certificates and the broadcaster's upload |
+| Upload bandwidth | The relay sends the stream to YouTube: about 6 Mbps per stream, ~8 GB for 3 hours |
+| Domain name | Storefront, studio subdomain, ingest address |
+| Docker available, who has admin access | Deployment by Docker Compose |
+| Where backups can go (another machine or cloud storage) | Every copy of the data must not live on one disk |
 
 ## 8. API outline
 
@@ -728,8 +777,11 @@ involved:
 
 ## 12. Design follow-ups
 
-- **Checkout**: if D1 confirms buyers are in Korea, use a Korean address and keep the customs
-  number field. The 10-minute hold timer already matches D4.
+- **Checkout** (D1 decided): Korean address with postcode search (the free Kakao/Daum postcode
+  widget in storefront), a Korean mobile number, and the customs number field. Replace the US
+  address in Figma. The 10-minute hold timer already matches D4.
+- **Sign-in** (D3): one screen with Kakao, phone number and email; the account page lists linked
+  methods.
 - **Quick listing**: the Color and Size chips should come from recently used labels with a "+ Add"
   for new ones (4.2). Hex is optional, and two-tone uses two hex values on one option value, which
   matches the components board.
