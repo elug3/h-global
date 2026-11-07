@@ -1,7 +1,8 @@
-# H-Global Backend Plan (draft v5)
+# H-Global Backend Plan (draft v6)
 
-> Status: draft for discussion, 2026-11-07. Nothing is built yet. Covers hg-server and how
-> storefront and hg-studio connect to it.
+> Status: 2026-11-07. Phase 1 core of hg-server is built (see "Implementation status" below and
+> [hg-server/README.md](../../hg-server/README.md)). Covers hg-server and how storefront and hg-studio
+> connect to it.
 > Builds on: the live commerce plan (`docs/plan/livestream-commerce-plan.md` on branch
 > `claude/h-global-livestream-plan-tj066k`) and the UI design draft in Figma
 > ([H-Global UI — Design draft](https://www.figma.com/design/vNXgKEBXrTOleCbgKOqD4G)).
@@ -14,6 +15,38 @@
 > and the CS rep before YouTube (5.5, 5.6).
 > v5: the agent runs as its own process, **hg-agent** (`hg-server --agent`), which perceives;
 > hg-server keeps every decision (5.6).
+
+## Implementation status (2026-11-07)
+
+hg-server's Phase 1 core is in [`hg-server/`](../../hg-server/README.md), with the HTTP contract in
+[`api/openapi.yaml`](../../api/openapi.yaml).
+
+**Built:** accounts and staff roles; spontaneous products with options, variants, stock, holds and
+media; shows with preselected items, captures (uploaded), one-transaction quick listing, pinning,
+sold out, keep listed and auto-hide; the viewer feed (SSE with replay); broadcast links and recaps;
+checkout with 10-minute holds and the customs code; the order lifecycle through inspection, customs
+check, shipping and delivery, with cancel and refund; the payment provider interface with a fake
+provider, verified and idempotent webhooks, and automatic refund of late payments; the staff order
+feed; the four jobs.
+
+**Differences from this plan:**
+
+- **PostgreSQL 18** is the database. IDs are UUIDv7 (PostgreSQL 18's `uuidv7()` as column
+  default), and available stock is a virtual generated column.
+- **Tests run against a real PostgreSQL 18** instead of in-memory stores (rule 5 in 3.2).
+- Each module's SQL lives in its `postgres.go`, used directly by its service; interfaces exist only
+  where an import cycle or an outside system needs one (`payment.OrderHook`, `payment.Provider`,
+  `storage.Storage`).
+- Stock and sold-out changes reach viewers as `live.item_updated` (5.3). There is no separate
+  `stock_changed` event.
+- `GET /api/shows/{id}` reads from the database; the in-memory snapshot (5.3) is not built yet.
+- Staff watch a show at `/studio-api/shows/{id}/events` and orders at `/studio-api/orders/events`.
+- Jobs run one at a time from one scheduler (running them in parallel could exhaust the connection
+  pool).
+
+**Not built yet:** media relay and frame ring buffer (5.5), YouTube Data API, hg-agent (5.6),
+notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
+the internal API, storefront and hg-studio.
 
 ## 1. Summary
 
@@ -148,7 +181,9 @@ Rules that keep the monolith tidy:
    reason for building a monolith, so use it: quick listing and checkout are single transactions.
 4. **Modules announce changes as events** (`platform/events`): written to an `events` table in the
    same transaction, delivered to in-process subscribers and the live feed after commit.
-5. **Every service is tested with an in-memory store**; Postgres tests run when `DATABASE_URL` is set.
+5. **Services are tested against a real PostgreSQL 18**, one fresh schema per test
+   (`HG_TEST_DATABASE_URL`); fakes are used only for things outside the database (payment provider,
+   file storage).
 
 ### 3.3 How the programs talk
 
@@ -277,12 +312,12 @@ hg-studio                               hg-server
 - `GET /api/shows/{id}/events` is a Server-Sent Events stream. Each frame carries the **full item
   snapshot**, so viewers never need a follow-up request:
   `event: item` · `data: {"type":"live.item_published","item":{…}}`.
-- Event types: `live.show_started`, `live.show_ended`, `live.item_published`, `live.item_updated`
-  (price, title, photos), `live.item_pinned`, `live.item_unpinned`, `live.stock_changed`,
-  `live.item_sold_out`.
+- Event types: `live.show_started`, `live.show_ended`, `live.show_updated`, `live.item_published`,
+  `live.item_updated` (price, title, photos, stock, sold out), `live.item_pinned`,
+  `live.item_unpinned`, `live.item_removed`, `live.items_reordered`.
 - **Stock changes are pushed, not polled.** Holds, orders and cancels happen in the same process, so
-  `catalog` publishes `stock_changed` whenever a variant on a live show changes, and the hub forwards
-  it. Repeated changes to one variant are merged into one frame per second.
+  every catalog change to a featured product publishes `live.item_updated` with the full item.
+  Merging repeated changes into one frame per second is not built yet.
 - `Last-Event-ID` replays from the `events` table (kept 24 h). Older than that, the server tells the
   client to reload `GET /api/shows/{id}`.
 - Heartbeat every 15 s; the reverse proxy must not buffer `text/event-stream`.
@@ -638,14 +673,14 @@ hg-agent calls `/internal-api/…` (service token, private network only); its en
 
 | Module | Tables |
 |---|---|
-| account | `customers`, `staff`, `sessions`, `addresses` |
+| account | `customers`, `staff` (sessions live in platform; `addresses` not built yet) |
 | catalog | `products`, `product_options`, `option_values`, `variants`, `product_media` |
 | live | `shows`, `show_items`, `captures`, `listing_proposals` (Phase 2) |
-| checkout | `carts`, `cart_lines`, `checkouts`, `holds` |
-| order | `orders`, `order_lines` (snapshot of title, options, price, photo), `order_events`, `shipments` |
+| checkout | `checkouts`, `checkout_lines`; holds are `held_qty` on `variants` (`carts` not built yet) |
+| order | `orders` (incl. carrier and tracking), `order_lines` (snapshot of title, options, price, photo), `order_media`, `order_history` |
 | payment | `payments`, `refunds`, `webhook_receipts` |
 | support | `conversations`, `messages` |
-| platform | `events` (event log + SSE replay), `jobs`, `idempotency_keys` |
+| platform | `events` (event log + SSE replay), `sessions`, `schema_migrations`; idempotency is `show_items.idempotency_key` and `webhook_receipts` |
 | Phase 2 | `image_embeddings` (pgvector) |
 
 Migrations are plain SQL files in `migrations/`, applied in order on startup and tracked in a

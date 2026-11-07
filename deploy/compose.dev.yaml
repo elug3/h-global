@@ -1,0 +1,45 @@
+# Local development: PostgreSQL 18 and hg-server.
+#   docker compose -f deploy/compose.dev.yaml up --build
+# Studio API: http://localhost:8080/studio-api  (owner@hglobal.test / owner-password)
+# Storefront API: http://localhost:8080/api
+name: hglobal-dev
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: hglobal
+      POSTGRES_PASSWORD: hglobal_dev
+      POSTGRES_DB: hglobal
+    ports:
+      - "5432:5432"
+    volumes:
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/18/docker,
+      # so the volume mounts the parent directory.
+      - pgdata:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hglobal -d hglobal"]
+      interval: 2s
+      retries: 30
+
+  hg-server:
+    build: ../hg-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HG_DATABASE_URL: postgres://hglobal:hglobal_dev@postgres:5432/hglobal?sslmode=disable
+      HG_COOKIE_SECURE: "false"
+      HG_DEV_ROUTES: "true"
+      HG_OWNER_EMAIL: owner@hglobal.test
+      HG_OWNER_PASSWORD: owner-password
+      HG_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001
+    ports:
+      - "8080:8080"
+    volumes:
+      - storage:/data
+
+volumes:
+  pgdata:
+  storage:

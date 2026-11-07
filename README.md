@@ -1,1 +1,35 @@
 # h-global
+
+H-Global sells products (bags, cosmetics and more) during YouTube live streams. Staff list items
+on the spot while the host shows them, and viewers buy them on the H-Global site during and after
+the stream.
+
+## Programs
+
+| Program | What it is | Status |
+|---|---|---|
+| [`hg-server/`](hg-server/README.md) | Go monolith: all business rules, PostgreSQL 18, background jobs | Phase 1 core built |
+| `storefront/` | Customer website (mobile first) | Not started |
+| `hg-studio/` | Staff web app, shown as **H-Global Studio** | Not started |
+
+The apps talk to hg-server only through [`api/openapi.yaml`](api/openapi.yaml).
+
+## Documents
+
+| Document | Contents |
+|---|---|
+| [docs/plan/backend-plan.md](docs/plan/backend-plan.md) | System plan: three programs, data model, live commerce, broadcast relay, agent listing, decisions, phases |
+| [hg-server/README.md](hg-server/README.md) | How hg-server works, how to run and test it, configuration |
+| [api/openapi.yaml](api/openapi.yaml) | HTTP contract (OpenAPI 3.1), checked against the server's routes by its tests |
+| [docs/todo/h-global-todo.md](docs/todo/h-global-todo.md) | Tasks from the 2026-10-31 meeting |
+| [UI design draft (Figma)](https://www.figma.com/design/vNXgKEBXrTOleCbgKOqD4G) | Storefront and H-Global Studio screens |
+
+## Quick start
+
+```bash
+docker compose -f deploy/compose.dev.yaml up --build
+# hg-server on http://localhost:8080, PostgreSQL 18 on localhost:5432
+# Studio sign-in: owner@hglobal.test / owner-password
+```
+
+See [hg-server/README.md](hg-server/README.md) for running without Docker and for the tests.
