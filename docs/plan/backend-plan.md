@@ -1,4 +1,4 @@
-# H-Global Backend Plan (draft v3)
+# H-Global Backend Plan (draft v4)
 
 > Status: draft for discussion, 2026-11-07. Nothing is built yet. Covers hg-server and how
 > storefront and hg-studio connect to it.
@@ -10,6 +10,8 @@
 > created on the spot during a stream; nothing has to be prepared in advance. v1 (built on Dupli1's
 > microservices) is replaced.
 > v3: the system is **three programs**: `hg-server`, `storefront` and `hg-studio` (section 3).
+> v4: the broadcast goes **through hg-server's media relay to YouTube**, so frames reach the agent
+> and the CS rep before YouTube (5.6, 5.7).
 
 ## 1. Summary
 
@@ -37,7 +39,7 @@ listing time, and everything else can be filled in after the stream.
               │        hg-server (one binary)     │
               │ ┌───────┐ ┌───────┐ ┌──────────┐  │
               │ │catalog│ │ live  │ │ checkout │  │     YouTube Data API
-              │ └───────┘ └───────┘ └──────────┘  │ ──▶ (start time, viewers)
+              │ └───────┘ └───────┘ └──────────┘  │ ──▶ (viewer count)
               │ ┌───────┐ ┌───────┐ ┌──────────┐  │
               │ │ order │ │payment│ │ support  │  │ ──▶ Payment provider
               │ └───────┘ └───────┘ └──────────┘  │     (card, virtual account)
@@ -75,8 +77,10 @@ The recommendation is in the second column.
 | D4 | When is a one-of-a-kind item held for the buyer? | **At "Buy now" / start of checkout, for 10 minutes.** | Two viewers will press Buy on the same bag in the same second. Holding at Buy now means the one who gets it can finish the address and customs steps without losing it. The Figma checkout already shows this timer. |
 | D5 | Quantity unknown on location | **Stock mode "until sold out"**: no count, sellable until the CS rep marks it sold out. Ask for a count whenever one is known. | It's our own model, so no fake ceiling is needed. The risk is overselling; the console shows orders arrive per item so the CS rep can stop in time. |
 | D6 | Days on sale after a stream | **Setting per stream, default 3.** Items are hidden, not deleted, and can be kept permanently. | From the meeting; the number of days was not decided. |
-| D7 | Hosting | **Confirm.** Three containers (section 3.4) + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
+| D7 | Hosting | **Confirm.** Four containers (section 3.4: the three programs plus the media relay) + PostgreSQL + S3-compatible storage behind HTTPS. Any VPS or managed Postgres works. | Must be decided before Phase 1 ends. |
 | D8 | Web stack for storefront and hg-studio | **TypeScript + React Router**, the stack Dupli1's web apps already use: storefront server-rendered, hg-studio as a single-page app. | The team already knows it. The storefront needs server rendering so product and recap links show a title, price and photo when shared on KakaoTalk; hg-studio sits behind a login and needs none. |
+| D9 | How the broadcast reaches YouTube | **Through hg-server's media relay** (5.6): one upload from location; the relay copies it to YouTube and taps frames and audio. A saved OBS profile that streams straight to YouTube is the fallback. | Frames arrive seconds before YouTube shows them and at full quality. The cost is that the relay must be up for YouTube to get the stream. Sending two uploads from the camera (one to YouTube, one to us) avoids that but doubles the uplink, which is often weak on location. |
+| D10 | May the agent publish by itself? | **No. It prepares a listing; a CS rep approves it with one tap** (5.7). Revisit after measuring accuracy. | A misheard price is a money error. Approval still cuts the rep's work from about 60 seconds to a few seconds per item. |
 
 ## 3. Programs and code layout
 
@@ -153,7 +157,8 @@ route even by mistake:
 - **storefront renders on the server** for the home, live, product and recap pages, calling
   hg-server from its own server, so shared links carry Open Graph tags (title, price, photo).
 - **hg-studio** is a single-page app served as static files by a small server that also does the
-  proxying. Its capture feature (`getDisplayMedia`) needs HTTPS and a desktop browser.
+  proxying. It no longer captures the YouTube tab itself: the live preview and the frames come from
+  hg-server's broadcast relay (5.6), so it works in any modern browser.
 - The apps hold **no business rules**. Prices, stock, numbering and order status are decided by
   hg-server only.
 
@@ -163,9 +168,12 @@ route even by mistake:
 |---|---|---|
 | `storefront` | `hglobal.example` | hg-server (internal network) |
 | `hg-studio` | `studio.hglobal.example` | hg-server (internal network) |
-| `hg-server` | not public, except `/hooks/*` for the payment provider | PostgreSQL, object storage, YouTube, payment provider, email, Telegram |
+| `hg-server` | not public, except `/hooks/*` for the payment provider | PostgreSQL, object storage, YouTube, payment provider, email, Telegram, media relay, agent model API |
+| `media-relay` | `ingest.hglobal.example` (SRT/RTMP port only) | receives the broadcast, pushes it to YouTube, gives hg-server frames, audio and the staff preview (5.6) |
 
 - One reverse proxy (TLS) in front routes the two domains and `/hooks/*`.
+- The media relay is reached directly by the broadcaster on its ingest port. It is not behind the
+  web proxy.
 - hg-server can be started twice from the same image (`--http` only and `--jobs` only) if the job
   runner ever needs to be separated. One process running both is the default.
 - hg-studio can additionally be limited to staff networks or put behind an access gateway, since
@@ -215,9 +223,9 @@ available = unlimited until marked sold out          (stock_mode = until_sold_ou
 
 | Entity | Fields | Rules |
 |---|---|---|
-| **Show** | `id`, `youtube_video_id`, `title`, `scheduled_at`, `status` (`draft`, `scheduled`, `live`, `ended`), `started_at`, `ended_at`, `display_days_after`, `next_number`, `host_name`, `cs_user_id` | `started_at` comes from YouTube's actual start time when available. |
+| **Show** | `id`, `youtube_video_id`, `title`, `scheduled_at`, `status` (`draft`, `scheduled`, `live`, `ended`), `started_at`, `ended_at`, `display_days_after`, `next_number`, `host_name`, `cs_user_id`, `ingest_key_hash`, `relay_state` | `started_at` is when the relay first received the stream (5.6). |
 | **Show item** | `id`, `show_id`, `number`, `source` (`preselected`, `captured`), `product_id`, `pinned`, `broadcast_offset_sec`, `capture_id`, `keep_listed`, `hide_at`, `published_at`, `published_by` | `number` is unique per show and **never reused or renumbered once the show is live**. |
-| **Capture** | `id`, `show_id`, `object_key`, `captured_at`, `broadcast_offset_sec`, `crop` | The raw frame. The cropped image becomes the product's first photo. |
+| **Capture** | `id`, `show_id`, `object_key`, `stream_pts_ms`, `broadcast_offset_sec`, `crop`, `source` (`relay`, `upload`) | A full-resolution frame from the relay's ring buffer (or an uploaded photo). The cropped image becomes the product's first photo. |
 
 - Preselected items (No. 1–8) can be reordered until the show starts; starting locks all numbers.
 - A captured item takes `next_number` inside its publishing transaction.
@@ -229,7 +237,8 @@ Target: under 60 seconds from capture to a buyable item; the server's share unde
 
 ```
 hg-studio                               hg-server
-  │ POST /studio-api/shows/{id}/captures ▶ save frame to storage, compute broadcast offset
+  │ POST /studio-api/shows/{id}/captures { at } ▶ take that frame from the relay's ring buffer,
+  │                                    save it to storage, offset = its stream timestamp
   │ ◀── capture (+ match suggestions, Phase 2)
   │ POST /studio-api/shows/{id}/items/quick (Idempotency-Key)
   │      { capture_id, crop, price, title?, options[], stock }
@@ -272,12 +281,95 @@ hg-studio                               hg-server
 - YouTube Data API v3, `videos.list?part=liveStreamingDetails,snippet`: actual start time and
   concurrent viewers, polled every 30 s while a show is live (about 360 quota units for a 3-hour
   stream; the default daily quota is 10,000).
-- Broadcast offset = capture time − actual start time − stream delay (a setting, default 10 s).
-  Replay link: `youtube.com/watch?v={id}&t={offset}s`.
-- API key stored as a secret, not in the repo. If YouTube is unreachable, the offset uses the Start
-  press and the viewer count is hidden. Listing never waits on YouTube.
+- The **video itself reaches YouTube through hg-server's relay** (5.6). The Data API is used only
+  for the viewer count and to confirm the stream is live.
+- Broadcast offset = the frame's timestamp in the relayed stream (5.6), which is exact. The YouTube
+  start time is only a fallback. Replay link: `youtube.com/watch?v={id}&t={offset}s`.
+- API key stored as a secret, not in the repo. If YouTube's API is unreachable, the viewer count is
+  hidden. Listing never waits on YouTube.
 
-### 5.5 After the stream
+### 5.6 Broadcast relay: frames before YouTube
+
+**Problem.** Taking frames from YouTube is too slow. YouTube adds roughly 5–30 seconds of delay
+(depending on the stream's latency setting) and recompresses the picture, so a listing starts late
+and from a blurry frame.
+
+**Design.** The broadcaster sends the stream to **hg-server's relay** instead of to YouTube. The
+relay passes the same stream on to YouTube and, at the same moment, hands frames and audio to
+hg-server for the agent and the CS rep.
+
+```
+ camera / OBS on location
+        │ SRT (or RTMP), one upload, per-show ingest key
+        ▼
+ ┌──────────── media-relay ────────────┐
+ │ receive ──┬─▶ copy to YouTube (RTMPS, no re-encode) ──▶ YouTube ──▶ viewers (5–30 s later)
+ │           ├─▶ frame tap: 2 fps, full resolution ──────▶ hg-server ring buffer (last 120 s)
+ │           ├─▶ audio tap: 16 kHz mono ─────────────────▶ speech-to-text ──▶ transcript
+ │           └─▶ low-latency preview (WebRTC) ───────────▶ hg-studio live console
+ └─────────────────────────────────────┘
+```
+
+- **Copy, don't re-encode.** The relay forwards the original H.264/AAC stream to YouTube unchanged.
+  That uses almost no CPU, keeps the original quality, and adds well under a second to what YouTube
+  already adds.
+- **Frames are seconds earlier and sharper.** A frame reaches hg-server about 0.5–1 s after the
+  camera, at the original bitrate, so the agent (5.7) or the CS rep works from the best picture.
+- **Exact timestamps.** Every frame carries its position in the stream, so the replay link
+  (`&t=`) is exact instead of estimated.
+- **hg-studio gets a near-real-time preview** from the relay instead of sharing a browser tab.
+  **Capture** picks a frame from hg-server's ring buffer, and the rep can step back through the last
+  few seconds to find a sharp one.
+- **Ingest keys per show.** Stream setup in hg-studio shows the ingest URL and a one-time key for
+  that show. The relay asks hg-server to authorise each connection, and the YouTube stream key never
+  leaves the server.
+- **SRT preferred over RTMP** from location (markets, warehouses, mobile uplinks), because it
+  recovers lost packets instead of stalling. RTMP stays available for simple setups.
+- **Recording (optional):** the relay can also save the original stream to object storage, for
+  clips and for checking a disputed price later.
+
+**Build vs buy.** hg-server stays the one place for business logic, but the video plumbing is a
+proven media server running beside it as its own container (for example MediaMTX, with ffmpeg doing
+the copy to YouTube and the frame decode). hg-server controls it: it starts and stops the YouTube
+push for a show, authorises ingest keys, reads frames and audio, and watches its health. Writing
+video handling into the Go process is possible but slower to get right, and a crash there would take
+the web shop down with the broadcast.
+
+**Failure and fallback.**
+
+| Failure | What happens | Mitigation |
+|---|---|---|
+| YouTube push drops | Ingest and frames continue; YouTube shows "stream offline" | The relay reconnects automatically; hg-studio shows a red banner; Telegram alert |
+| Relay or its machine goes down | The broadcast to YouTube stops | A saved OBS profile that streams straight to YouTube, one click to switch; listing falls back to manual capture. This is the cost of a single upload (D9). |
+| Upload from location is weak | Same as streaming straight to YouTube | SRT reduces stalls. Set the camera bitrate to what the uplink holds. |
+
+**Cost.** No re-encoding, so the relay needs little CPU. The server carries the stream twice (in and
+out): at 6 Mbps, about 8 GB each way for a 3-hour stream. Check the hosting provider's egress
+pricing (D7).
+
+### 5.7 Agent listing (optional, Phase 2)
+
+With frames arriving before YouTube, an agent can prepare listings while the host is still talking:
+
+1. **Watch.** hg-server sends sampled frames that changed (frames that barely differ are skipped)
+   to a small, cheap vision model, which answers "is a new product being shown, and where is it?".
+2. **Prepare.** When it says yes, a stronger model gets 3–4 sharp frames from the ring buffer, the
+   last minute of transcript, and similar existing products. It returns a **listing proposal**:
+   title, crop, colors with swatch colors, sizes, price, and new-or-existing.
+3. **Approve.** The proposal appears in hg-studio's quick-listing panel, already filled in. The CS
+   rep checks the price and presses Publish. That is the same quick-listing transaction as 5.2, so
+   the agent never publishes on its own (D10).
+
+- Estimated model cost: **about $5–10 per 3-hour stream** with about 40 listings (cheap watcher
+  plus a stronger model per listing), before speech-to-text. To be confirmed with a pilot on a
+  recorded stream.
+- **Timing.** A proposal can be ready before YouTube viewers even see the product. Publishing at
+  that moment is fine (the item appears as the host starts talking about it), but the console
+  shows the YouTube delay so the CS rep knows what viewers currently see.
+- New table: `listing_proposals` (`show_id`, frames, transcript excerpt, proposed fields,
+  `status`: `pending` / `published` / `dismissed`, `published_item_id`), kept to measure accuracy.
+
+### 5.8 After the stream
 
 - **Auto-hide job** (every minute): products whose show items passed `hide_at` and are not
   `keep_listed` move to `hidden`. Hidden products disappear from the site but keep their page for
@@ -348,7 +440,7 @@ below are relative to those prefixes. The full contract lives in `api/openapi.ya
 
 | Area | storefront → `/api` | hg-studio → `/studio-api` |
 |---|---|---|
-| Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick`, `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
+| Live | `GET /shows/current`, `GET /shows/{id}`, `GET /shows/{id}/events` (SSE), `GET /shows/{id}/recap`, `GET /shows?status=ended` | `POST/PATCH /shows`, `POST /shows/{id}/start`, `/end`, `POST/DELETE /shows/{id}/items`, `PUT /shows/{id}/items/order`, `GET /shows/{id}/ingest` (URL + key), `GET /shows/{id}/preview` (WebRTC session), `GET /shows/{id}/frames?from=` (ring buffer), `POST /shows/{id}/captures`, `POST /shows/{id}/items/quick`, `GET /shows/{id}/proposals` (Phase 2), `POST /items/{id}/pin`, `/unpin`, `/sold-out`, `GET /shows/{id}/console` |
 | Catalog | `GET /products`, `GET /products/{id}` (incl. broadcasts and inspection media) | `PATCH /products/{id}`, options, variants, stock, media upload, `GET /catalog/suggestions`, `GET /catalog/incomplete` |
 | Checkout | `GET/PUT /cart`, `POST /checkout` (Buy now / from cart, takes holds), `POST /checkout/{id}/pay` | — |
 | Orders | `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel` | `GET /orders`, `POST /orders/{id}/inspection`, `/customs-check`, `/ship`, `/deliver`, `/refund`, `GET /orders/events` (SSE) |
@@ -362,7 +454,7 @@ below are relative to those prefixes. The full contract lives in `api/openapi.ya
 |---|---|
 | account | `customers`, `staff`, `sessions`, `addresses` |
 | catalog | `products`, `product_options`, `option_values`, `variants`, `product_media` |
-| live | `shows`, `show_items`, `captures` |
+| live | `shows`, `show_items`, `captures`, `listing_proposals` (Phase 2) |
 | checkout | `carts`, `cart_lines`, `checkouts`, `holds` |
 | order | `orders`, `order_lines` (snapshot of title, options, price, photo), `order_events`, `shipments` |
 | payment | `payments`, `refunds`, `webhook_receipts` |
@@ -390,9 +482,9 @@ Migrations are plain SQL files in `migrations/`, applied in order on startup and
 
 | Phase | hg-server | storefront | hg-studio |
 |---|---|---|---|
-| **0 — Decide** (with the 11/08 design review) | Answer D1–D8. Agree this plan and `api/openapi.yaml` v0. | Design draft approved | Design draft approved |
-| **1 — MVP** (about 6–8 weeks; the apps are built alongside hg-server against the contract and a mock server) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock, media. Live: shows, preselected No. 1–8, capture, quick listing, pin, sold out, SSE feed, YouTube offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. | Home (live banner, next stream), live page with SSE, product sheet and page, cart, checkout with hold timer and customs number, sign-in, order history. | Sign-in, stream setup, live console (capture, quick listing, published list, pin, sold out), order handling (inspection, customs check, ship, refund), product editing. |
-| **2 — Match and follow up** (about 3–4 weeks) | Image matching (pgvector); recap; completion list; console stats per show; 1:1 chat; inspection media on the product page. | Recap page, chat, inspection section on the product page. | Match suggestions in quick listing, after-stream screen, chat inbox, console stats. |
+| **0 — Decide** (with the 11/08 design review) | Answer D1–D10. Agree this plan and `api/openapi.yaml` v0. | Design draft approved | Design draft approved |
+| **1 — MVP** (about 6–8 weeks; the apps are built alongside hg-server against the contract and a mock server) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock, media. Live: shows, preselected No. 1–8, **media relay to YouTube with frame tap and preview**, capture from the ring buffer, quick listing, pin, sold out, SSE feed, replay offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. | Home (live banner, next stream), live page with SSE, product sheet and page, cart, checkout with hold timer and customs number, sign-in, order history. | Sign-in, stream setup (ingest URL and key), live console (relay preview, capture with step-back, quick listing, published list, pin, sold out, YouTube push status), order handling (inspection, customs check, ship, refund), product editing. |
+| **2 — Match and follow up** (about 3–4 weeks) | **Agent listing proposals (5.7)** with speech-to-text; image matching (pgvector); recap; completion list; console stats per show; 1:1 chat; inspection media on the product page. | Recap page, chat, inspection section on the product page. | Agent proposals and match suggestions in quick listing, after-stream screen, chat inbox, console stats. |
 | **3 — Later** | Kakao messages, stream reminders, YouTube chat, customs number lookup, reviews, analytics per item. | Reminders, reviews. | Analytics. |
 
 Suggested build order inside Phase 1. Each step ends with something working across the programs
@@ -402,13 +494,15 @@ involved:
    hg-server; `api/openapi.yaml` v0 and generated clients; migrations; staff sign-in in hg-studio.
 2. **Catalog:** products, options, variants, stock and media in hg-server; product editing in
    hg-studio; product page in storefront.
-3. **Live listing:** shows, preselected items, captures and quick listing in hg-server; stream setup
+3. **Broadcast relay:** media-relay container, ingest keys, copy to YouTube, frame ring buffer and
+   preview, with a test stream from OBS; the YouTube push status in hg-studio.
+4. **Live listing:** shows, preselected items, captures and quick listing in hg-server; stream setup
    and the live console in hg-studio.
-4. **Live feed:** events, SSE hub, in-memory show snapshot and stock push in hg-server; the live page
+5. **Live feed:** events, SSE hub, in-memory show snapshot and stock push in hg-server; the live page
    in storefront updates without reload.
-5. **Buying:** checkout and holds, orders, payment adapter and webhook, hold and unpaid-order jobs in
+6. **Buying:** checkout and holds, orders, payment adapter and webhook, hold and unpaid-order jobs in
    hg-server; cart and checkout in storefront; order handling in hg-studio.
-6. **Finish:** YouTube adapter, auto-hide job, Telegram and email; one end-to-end test that runs a
+7. **Finish:** YouTube viewer count, auto-hide job, Telegram and email; one end-to-end test that runs a
    stream in hg-studio, buys the item in storefront and ships it.
 
 ## 12. Design follow-ups
