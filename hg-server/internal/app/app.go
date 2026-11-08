@@ -24,6 +24,7 @@ import (
 	"github.com/elug3/h-global/hg-server/internal/platform/httpx"
 	"github.com/elug3/h-global/hg-server/internal/platform/jobs"
 	"github.com/elug3/h-global/hg-server/internal/platform/storage"
+	"github.com/elug3/h-global/hg-server/internal/relay"
 )
 
 // App is the wired server.
@@ -40,6 +41,7 @@ type App struct {
 	Orders   *order.Service
 	Payments *payment.Service
 	Checkout *checkout.Service
+	Relay    *relay.Manager // runs only when Config.Relay.Enabled; see cmd/hg-server
 
 	Handler http.Handler
 	Routes  []string // "METHOD /path" for every route, for the OpenAPI check
@@ -68,6 +70,8 @@ func New(cfg config.Config, d *db.DB) *App {
 	a.Payments.Orders = a.Orders
 	a.Checkout = &checkout.Service{DB: d, Catalog: a.Catalog, Orders: a.Orders, Payments: a.Payments,
 		HoldTTL: cfg.HoldTTL, VirtualAcctTTL: cfg.VirtualAcctTTL, ShippingFeeWon: cfg.ShippingFeeWon}
+
+	a.Relay = &relay.Manager{Config: cfg.Relay, Live: a.Live}
 
 	a.routes()
 	a.jobs()
@@ -99,6 +103,7 @@ func (a *App) routes() {
 	orders.RegisterAPI(api)
 
 	(&checkout.Handler{Svc: a.Checkout}).RegisterAPI(api)
+	(&relay.Handler{Manager: a.Relay}).RegisterStudio(studio)
 
 	pay := &payment.Handler{Svc: a.Payments}
 	pay.RegisterHooks(hooks)

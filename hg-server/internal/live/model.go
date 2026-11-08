@@ -25,11 +25,11 @@ const (
 	ShowEnded     = "ended"
 )
 
-// Item sources.
+// Item sources. Every item is listed on air: nothing is prepared before the
+// stream, and numbers start at No.1 with the first listing.
 const (
-	SourcePreselected = "preselected" // picked before the stream (No. 1-8)
-	SourceCaptured    = "captured"    // listed on air from a captured frame
-	SourceMatched     = "matched"     // an existing product added on air
+	SourceCaptured = "captured" // listed on air from a captured frame
+	SourceMatched  = "matched"  // an existing product added on air
 )
 
 // NewBadgeFor is how long an item listed on air shows as NEW.
@@ -49,6 +49,11 @@ type Show struct {
 	HostName         string     `json:"host_name"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	// IngestStartedAt is when the broadcast relay first received the stream.
+	// YouTube's timeline starts at about the same moment, so relay frames are
+	// placed on it relative to this time.
+	IngestStartedAt  *time.Time `json:"ingest_started_at"`
+	IngestKeyVersion int        `json:"-"`
 }
 
 // WatchURL is the stream's YouTube page.

@@ -132,14 +132,11 @@ func (s *Service) ListForCustomer(ctx context.Context, customerID uuid.UUID, lim
 }
 
 // List lists orders for staff, newest first.
-func (s *Service) List(ctx context.Context, statuses []string, limit, offset int) ([]Order, error) {
-	var list []Order
-	var err error
-	if len(statuses) == 0 {
-		list, err = s.Store.list(ctx, `ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
-	} else {
-		list, err = s.Store.list(ctx, `WHERE status = ANY($1) ORDER BY created_at DESC LIMIT $2 OFFSET $3`, statuses, limit, offset)
-	}
+func (s *Service) List(ctx context.Context, f Filter) ([]Order, error) {
+	where, args := f.where()
+	n := len(args)
+	args = append(args, f.Limit, f.Offset)
+	list, err := s.Store.list(ctx, where+fmt.Sprintf(`ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, n+1, n+2), args...)
 	for i := range list {
 		s.decorate(&list[i], true)
 	}

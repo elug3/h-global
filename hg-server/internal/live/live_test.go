@@ -107,46 +107,26 @@ func TestParseYouTubeID(t *testing.T) {
 	}
 }
 
-func TestPreselectedNumbersLockAtStart(t *testing.T) {
+func TestShowsStartEmptyAndNumberOnAir(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	sh, _ := f.live.CreateShow(ctx, f.staff, live.NewShow{Title: "Show"})
-	var items []live.Item
-	for i := 0; i < 3; i++ {
-		p, _ := f.catalog.Create(ctx, catalog.NewProduct{Title: "Bag", PriceWon: 1000, Stock: catalog.NewStock{Qty: 1}})
-		it, err := f.live.AddPreselected(ctx, sh.ID, p.ID, f.staff)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if it.Number != i+1 {
-			t.Fatalf("number %d, want %d", it.Number, i+1)
-		}
-		items = append(items, it)
-	}
-	got, err := f.live.Reorder(ctx, sh.ID, []uuid.UUID{items[2].ID, items[0].ID, items[1].ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got[0].ID != items[2].ID || got[2].ID != items[1].ID {
-		t.Fatal("reorder did not apply")
-	}
-	if err := f.live.RemoveItem(ctx, sh.ID, items[2].ID); err != nil {
-		t.Fatal(err)
-	}
-	studio, _ := f.live.StudioShow(ctx, sh.ID)
-	if len(studio.Items) != 2 || studio.Items[0].Number != 1 || studio.Items[1].Number != 2 || studio.NextNumber != 3 {
-		t.Fatalf("after remove: %+v next=%d", studio.Items, studio.NextNumber)
-	}
 	if _, err := f.live.Start(ctx, sh.ID); err != nil {
 		t.Fatal(err)
 	}
-	// Draft products went live with the show.
-	studio, _ = f.live.StudioShow(ctx, sh.ID)
-	if studio.Items[0].Product.Status != catalog.StatusLive {
-		t.Fatalf("preselected product status %s", studio.Items[0].Product.Status)
+	// Nothing is prepared before the stream: it starts with no items.
+	studio, _ := f.live.StudioShow(ctx, sh.ID)
+	if len(studio.Items) != 0 || studio.NextNumber != 1 {
+		t.Fatalf("new live show: %d items, next %d", len(studio.Items), studio.NextNumber)
 	}
-	if err := f.live.RemoveItem(ctx, sh.ID, items[0].ID); !apperr.Is(err, "show_started") {
-		t.Fatalf("remove after start: %v", err)
+	// An existing product shown on air is listed as the next number.
+	p, _ := f.catalog.Create(ctx, catalog.NewProduct{Title: "Bag", PriceWon: 1000, Stock: catalog.NewStock{Qty: 1}})
+	it, err := f.live.QuickList(ctx, sh.ID, f.staff, live.QuickListInput{ProductID: &p.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Number != 1 || it.Source != live.SourceMatched {
+		t.Fatalf("item: number=%d source=%s", it.Number, it.Source)
 	}
 	other, _ := f.live.CreateShow(ctx, f.staff, live.NewShow{Title: "Second"})
 	if _, err := f.live.Start(ctx, other.ID); !apperr.Is(err, "another_show_live") {

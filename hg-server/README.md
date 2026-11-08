@@ -21,7 +21,7 @@ decisions are in [`../docs/plan/backend-plan.md`](../docs/plan/backend-plan.md).
 | Staff accounts and roles (`cs` < `manager` < `owner`), customer accounts, sessions | Built |
 | Products created on the spot: photo + price required, free-form options with swatch colors, every option combination becomes a variant | Built |
 | Stock: counted or "until sold out", holds that can never oversell, recently used option values | Built |
-| Streams (shows): preselected No. 1–8, numbers locked at start, one live show at a time | Built |
+| Streams (shows): no products prepared in advance; items are listed on air from No.1, numbers never change; one live show at a time | Built |
 | Capture upload and **quick listing in one transaction** (product, options, stock, photo, numbered item, viewer event) with idempotency | Built |
 | Pin "worn or held today", sold out, keep listed, auto-hide N days after the stream | Built |
 | Live feed to viewers (Server-Sent Events) with replay from `last_event_id`; stock changes pushed | Built |
@@ -30,12 +30,14 @@ decisions are in [`../docs/plan/backend-plan.md`](../docs/plan/backend-plan.md).
 | Orders: pending_payment → paid → inspecting → customs_check → shipped → delivered → completed; cancel with refund | Built |
 | Inspection photos and videos per order | Built |
 | Payment provider interface, webhook verification and idempotency, late-payment auto refund | Built, with a **fake provider** until one is chosen (plan D2) |
-| Staff order feed (SSE) | Built |
-| Media relay, frame ring buffer, YouTube Data API, hg-agent, 1:1 chat, Telegram/email, Kakao login, cart, reviews | **Not built yet** (see "Next") |
+| Staff order feed (SSE); order search (number, recipient, phone), counts per status | Built |
+| Sales per stream (`GET /studio-api/shows/{id}/sales`): orders, units and sales per item | Built |
+| **Broadcast relay** (prototype): SRT ingest with a per-show passphrase, unchanged copy to YouTube, 2 fps frame buffer (120 s), MJPEG preview, capture from a buffered frame | Built ([docs/prototype/relay.md](../docs/prototype/relay.md)) |
+| YouTube Data API, hg-agent, 1:1 chat, Telegram/email, Kakao/SMS login, password reset, cart, reviews | **Not built yet** (see "Next") |
 
 ## Run it locally
 
-Requirements: Go 1.24+, PostgreSQL 18 (or Docker).
+Requirements: Go 1.24+, PostgreSQL 18 (or Docker), and ffmpeg for the broadcast relay and its tests.
 
 ```bash
 # PostgreSQL 18 in Docker, with a hglobal_test database for the tests
@@ -95,6 +97,15 @@ hg-server -migrate     # apply migrations and exit
 | `HG_PAYMENT_PROVIDER` | `fake` | Only `fake` exists until the provider is chosen. |
 | `HG_FAKE_PAYMENT_SECRET` | `dev-only-secret` | Signs fake webhooks. |
 | `HG_DEV_ROUTES` | `false` | Enables `/api/dev/payments/{id}/approve` and `/fail`. Never in production. |
+| `HG_RELAY_ENABLED` | `false` | Runs the broadcast relay for the live show (needs `ffmpeg`). |
+| `HG_RELAY_SECRET` | (none) | Derives per-show SRT passphrases. At least 16 characters; required with the relay. |
+| `HG_RELAY_LISTEN` | `0.0.0.0:9000` | SRT listen address (UDP). |
+| `HG_RELAY_PUBLIC_HOST` | `localhost:9000` | Host and port shown to the broadcaster. |
+| `HG_RELAY_SRT_LATENCY_MS` | `300` | SRT buffer for lost packets; raise it for poor uplinks. |
+| `HG_RELAY_LOCAL_COPY` | `127.0.0.1:19400` | Local UDP port between ingest and the YouTube pusher. |
+| `HG_YOUTUBE_RTMP_URL` | `rtmps://a.rtmp.youtube.com/live2` | YouTube ingest. |
+| `HG_YOUTUBE_STREAM_KEY` | (none) | YouTube stream key; empty means frames only, no push. |
+| `HG_FFMPEG` | `ffmpeg` | ffmpeg binary. |
 
 ## Code layout
 
@@ -122,6 +133,7 @@ internal/
   checkout/          Buy now holds, address, pay
   order/             order lifecycle, inspection, customs check, shipping, cancel/refund
   payment/           provider interface, fake provider, webhooks, refunds
+  relay/             broadcast relay: ffmpeg ingest and YouTube push, frame buffer, Studio routes
 ```
 
 Each module has `model.go` (types and rules), `service.go` (use cases), `postgres.go` (its SQL),
@@ -192,6 +204,10 @@ PostgreSQL `LISTEN/NOTIFY` fan-out (plan 5.3).
 3. `POST /api/checkout/{id}/pay` creates the pending order (the holds move with it) and a pending
    payment in one transaction, then asks the provider to start it. Card: send the customer to
    `payment.redirect_url`. Virtual account: show `payment.virtual_account`.
+   The order number is `HG-YYMMDD-XXXXX`: the date in Korea time and five random characters from
+   `23456789BCDFGHJKMNPQRSTVWXZ` (`HG-261107-7KQ4M`), so numbers do not show how many orders a day
+   brings. No 0/O, 1/I/L or vowels: easy to read out, never a word. `orders.number` is unique; a
+   taken number inserts nothing and another code is tried (up to five times).
 4. The provider's webhook (`POST /hooks/payments/{provider}`) is signature-checked and recorded in
    `webhook_receipts`, so repeats do nothing. On success the order becomes `paid` and the holds
    become sold, in one transaction.
@@ -200,6 +216,17 @@ PostgreSQL `LISTEN/NOTIFY` fan-out (plan 5.3).
    `…/inspection/complete` → `…/customs-check` (requires a valid PCCC) → `…/ship` → `…/deliver`.
    The customer confirms receipt (`POST /api/orders/{id}/receipt`).
 7. Cancel: the provider refunds first, then the order changes.
+8. Staff lists: `GET /studio-api/orders?status=paid,inspecting&q=…` (q matches the order number,
+   with or without hyphens, or the recipient, or 3+ digits of the phone) and `GET /studio-api/orders/counts` (orders per status).
+
+**Sales per stream** (`GET /studio-api/shows/{id}/sales`, for Studio's after-stream screen): an order
+line counts for a stream when its product is one of the stream's items, the order was placed after
+the stream started, and no later stream featuring the same product had started by then. Paid,
+uncanceled orders give `orders`, `units` and `sales_won` (line totals, shipping excluded), in total
+and per item; `pending_orders` and `canceled_orders` are counted beside them.
+
+`GET /api/orders/{id}/payment` returns the order's latest payment, so the buyer can see the
+virtual account to pay into again.
 
 With the fake provider, `POST /api/dev/payments/{id}/approve` plays the customer paying
 (`HG_DEV_ROUTES=true`).
@@ -231,6 +258,9 @@ go vet ./...
 | Test | Covers |
 |---|---|
 | `internal/app` `TestLiveStreamToDelivery` | The plan's end-to-end flow over HTTP: go live, viewer stream, capture, quick listing, two buyers racing for one unit, pay, inspect, customs check, ship, deliver, receipt, replay links, recap |
+| `internal/app` `TestOrderNumbers` | `HG-YYMMDD-XXXXX` numbers: twenty orders at once all different and well formed, a taken code is retried, search with or without hyphens |
+| `internal/app` `TestCustomerSeesOwnPayment` | The buyer sees their virtual account again; other customers and visitors cannot |
+| `internal/app` `TestOrderSearchCountsAndShowSales` | Order search and status counts; sales per stream, including an order before the stream, a canceled one, an unpaid one and the same product in a later stream |
 | `internal/app` `TestPaidCancelRefundsAndReturnsStock`, `TestAccessRules` | Refund and stock return; roles, session separation, cross-site origin check |
 | `internal/app` `TestRoutesMatchOpenAPI` | Every route is in `api/openapi.yaml` and nothing extra is documented |
 | `internal/app` `TestJobsRunOnASmallPool` | Jobs cannot deadlock the connection pool |
@@ -238,12 +268,16 @@ go vet ./...
 | `internal/live` | YouTube links, numbering and reordering, quick listing rollback and idempotency, events, auto-hide |
 | `internal/checkout` | Hold expiry, unpaid-order expiry and late-payment refund, webhook signature and idempotency, virtual accounts |
 | `internal/platform/db` | PostgreSQL 18 (`uuidv7()`, virtual generated column), transactions and after-commit hooks |
+| `internal/relay` | Frame splitting, buffer window, ingest keys; with ffmpeg: **latency measurement** and wrong-passphrase rejection |
+| `internal/app` `TestRelayToQuickListing` | Live show → relay listens → SRT broadcast → frames, preview → capture from buffer → quick listing with replay offset → show ends, relay stops |
 
 ## Operations
 
 - **Docker image:** `hg-server/Dockerfile` builds a static binary on a distroless base;
   `deploy/compose.dev.yaml` runs it with PostgreSQL 18.
 - **Health:** `GET /healthz` pings the database (503 when it cannot).
+- **Relay:** the image includes ffmpeg; open UDP 9000 for SRT. The relay runs in the HTTP process
+  (its frame buffer is served there).
 - **Logs:** JSON on stdout, one line per request.
 - **Backups:** the database and `HG_STORAGE_DIR` (plan section 10).
 - **Behind a proxy:** the apps proxy `/api` and `/studio-api` on their own origins (plan 3.3); set
@@ -253,8 +287,8 @@ go vet ./...
 
 In the order of the plan's build steps:
 
-1. **Broadcast relay** (plan 5.5): media-relay container, per-show ingest keys, frame ring buffer
-   (captures with `source = relay`), YouTube push status.
+1. **Measure the relay on H-Global's server** with a real camera and YouTube
+   ([docs/prototype/relay.md](../docs/prototype/relay.md)).
 2. **YouTube Data API**: viewer count and actual start time.
 3. **Notifications**: Telegram alerts for staff, email for paid and shipped.
 4. **Payment provider** (plan D2): a real adapter behind `payment.Provider`, plus a reconcile job.

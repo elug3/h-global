@@ -1,11 +1,9 @@
 package live
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,15 +19,13 @@ import (
 
 // Event types on a show's topic.
 const (
-	EvShowStarted    = "live.show_started"
-	EvShowEnded      = "live.show_ended"
-	EvShowUpdated    = "live.show_updated"
-	EvItemPublished  = "live.item_published"
-	EvItemUpdated    = "live.item_updated" // price, title, photos, stock, sold out
-	EvItemPinned     = "live.item_pinned"
-	EvItemUnpinned   = "live.item_unpinned"
-	EvItemRemoved    = "live.item_removed"
-	EvItemsReordered = "live.items_reordered"
+	EvShowStarted   = "live.show_started"
+	EvShowEnded     = "live.show_ended"
+	EvShowUpdated   = "live.show_updated"
+	EvItemPublished = "live.item_published"
+	EvItemUpdated   = "live.item_updated" // price, title, photos, stock, sold out
+	EvItemPinned    = "live.item_pinned"
+	EvItemUnpinned  = "live.item_unpinned"
 )
 
 // Topic is a show's event topic (public).
@@ -254,7 +250,7 @@ func (s *Service) views(ctx context.Context, sh Show, items []Item) ([]ItemView,
 func (s *Service) view(sh Show, it Item, p catalog.Product) ItemView {
 	return ItemView{
 		ID: it.ID, Number: it.Number, Source: it.Source, Pinned: it.Pinned,
-		IsNew:       sh.Status == ShowLive && it.Source != SourcePreselected && s.now().Sub(it.PublishedAt) < NewBadgeFor,
+		IsNew:       sh.Status == ShowLive && s.now().Sub(it.PublishedAt) < NewBadgeFor,
 		PublishedAt: it.PublishedAt, BroadcastOffsetSec: it.BroadcastOffsetSec,
 		ReplayURL: sh.ReplayURL(it.BroadcastOffsetSec), Product: p.Public(),
 	}
@@ -290,134 +286,8 @@ func (s *Service) ProductChanged(ctx context.Context, productID uuid.UUID) error
 	return nil
 }
 
-func editable(sh Show) error {
-	if sh.Status != ShowDraft && sh.Status != ShowScheduled {
-		return apperr.Conflict("show_started", "preselected items can only change before the show starts")
-	}
-	return nil
-}
-
-// AddPreselected adds an existing product as the next numbered item.
-func (s *Service) AddPreselected(ctx context.Context, showID, productID, staffID uuid.UUID) (Item, error) {
-	var out Item
-	err := s.DB.InTx(ctx, func(ctx context.Context) error {
-		sh, err := s.Store.show(ctx, showID, true)
-		if err != nil {
-			return err
-		}
-		if err := editable(sh); err != nil {
-			return err
-		}
-		p, err := s.Catalog.Get(ctx, productID)
-		if err != nil {
-			return err
-		}
-		if p.Status == catalog.StatusArchived {
-			return apperr.Conflict("product_archived", "archived products cannot be added")
-		}
-		out = Item{ID: ids.New(), ShowID: showID, Number: sh.NextNumber, Source: SourcePreselected,
-			ProductID: productID, PublishedBy: &staffID}
-		if err := s.Store.insertItem(ctx, out, ""); err != nil {
-			return err
-		}
-		sh.NextNumber++
-		if err := s.Store.saveShow(ctx, sh); err != nil {
-			return err
-		}
-		out, err = s.Store.item(ctx, out.ID)
-		return err
-	})
-	return out, err
-}
-
-// RemoveItem removes a preselected item before the show starts and closes
-// the gap in numbering.
-func (s *Service) RemoveItem(ctx context.Context, showID, itemID uuid.UUID) error {
-	return s.DB.InTx(ctx, func(ctx context.Context) error {
-		sh, err := s.Store.show(ctx, showID, true)
-		if err != nil {
-			return err
-		}
-		if err := editable(sh); err != nil {
-			return err
-		}
-		it, err := s.Store.item(ctx, itemID)
-		if err != nil {
-			return err
-		}
-		if it.ShowID != showID {
-			return apperr.NotFound("item")
-		}
-		q := s.DB.Q(ctx)
-		if _, err := q.Exec(ctx, `SET CONSTRAINTS show_items_number DEFERRED`); err != nil {
-			return err
-		}
-		if _, err := q.Exec(ctx, `DELETE FROM show_items WHERE id = $1`, itemID); err != nil {
-			return err
-		}
-		if _, err := q.Exec(ctx, `UPDATE show_items SET number = number - 1 WHERE show_id = $1 AND number > $2`, showID, it.Number); err != nil {
-			return err
-		}
-		sh.NextNumber--
-		if err := s.Store.saveShow(ctx, sh); err != nil {
-			return err
-		}
-		return s.publishShowItems(ctx, sh, EvItemRemoved, map[string]any{"item_id": itemID})
-	})
-}
-
-// Reorder sets the order of preselected items before the show starts.
-// itemIDs must list every item of the show exactly once.
-func (s *Service) Reorder(ctx context.Context, showID uuid.UUID, itemIDs []uuid.UUID) ([]Item, error) {
-	var out []Item
-	err := s.DB.InTx(ctx, func(ctx context.Context) error {
-		sh, err := s.Store.show(ctx, showID, true)
-		if err != nil {
-			return err
-		}
-		if err := editable(sh); err != nil {
-			return err
-		}
-		cur, err := s.Store.items(ctx, `WHERE show_id = $1`, showID)
-		if err != nil {
-			return err
-		}
-		have := make([]uuid.UUID, len(cur))
-		for i, it := range cur {
-			have[i] = it.ID
-		}
-		want := slices.Clone(itemIDs)
-		slices.SortFunc(have, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
-		slices.SortFunc(want, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
-		if !slices.Equal(have, want) {
-			return apperr.Invalid("invalid_order", "item_ids must list every item of the show exactly once")
-		}
-		q := s.DB.Q(ctx)
-		if _, err := q.Exec(ctx, `SET CONSTRAINTS show_items_number DEFERRED`); err != nil {
-			return err
-		}
-		for i, id := range itemIDs {
-			if _, err := q.Exec(ctx, `UPDATE show_items SET number = $2 WHERE id = $1`, id, i+1); err != nil {
-				return err
-			}
-		}
-		if out, err = s.Store.items(ctx, `WHERE show_id = $1 ORDER BY number`, showID); err != nil {
-			return err
-		}
-		return s.publishShowItems(ctx, sh, EvItemsReordered, map[string]any{"item_ids": itemIDs})
-	})
-	return out, err
-}
-
-func (s *Service) publishShowItems(ctx context.Context, sh Show, typ string, data any) error {
-	if sh.Status == ShowDraft {
-		return nil
-	}
-	return s.Bus.Publish(ctx, Topic(sh.ID), typ, data)
-}
-
-// Start puts a show live. Preselected products that are drafts or hidden go
-// live with it. Numbers are locked from here on.
+// Start puts a show live. It has no items yet: every product is listed on air,
+// from No.1.
 func (s *Service) Start(ctx context.Context, showID uuid.UUID) (Show, error) {
 	var out Show
 	err := s.DB.InTx(ctx, func(ctx context.Context) error {
@@ -435,21 +305,6 @@ func (s *Service) Start(ctx context.Context, showID uuid.UUID) (Show, error) {
 		}
 		if err := s.publishShow(ctx, EvShowStarted, sh); err != nil {
 			return err
-		}
-		items, err := s.Store.items(ctx, `WHERE show_id = $1`, showID)
-		if err != nil {
-			return err
-		}
-		for _, it := range items {
-			p, err := s.Catalog.Get(ctx, it.ProductID)
-			if err != nil {
-				return err
-			}
-			if p.Status == catalog.StatusDraft || p.Status == catalog.StatusHidden {
-				if err := s.Catalog.SetStatus(ctx, p.ID, catalog.StatusLive); err != nil {
-					return err
-				}
-			}
 		}
 		out, err = s.Store.show(ctx, showID, false)
 		return err
@@ -512,6 +367,77 @@ func (s *Service) SaveCapture(ctx context.Context, showID, staffID uuid.UUID, da
 	}
 	c := Capture{ID: ids.New(), ShowID: showID, ObjectKey: f.Key, ContentType: f.ContentType,
 		Width: f.Width, Height: f.Height, BroadcastOffsetSec: s.offset(sh, at), Source: "upload", CreatedBy: &staffID}
+	if err := s.Store.insertCapture(ctx, c); err != nil {
+		_ = s.Storage.Delete(context.WithoutCancel(ctx), f.Key)
+		return Capture{}, err
+	}
+	return s.Capture(ctx, c.ID)
+}
+
+// Show returns a show.
+func (s *Service) Show(ctx context.Context, id uuid.UUID) (Show, error) {
+	return s.Store.show(ctx, id, false)
+}
+
+// LiveShow returns the show that is live now, if any.
+func (s *Service) LiveShow(ctx context.Context) (*Show, error) {
+	list, err := s.Store.shows(ctx, `WHERE status = 'live' LIMIT 1`)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return &list[0], nil
+}
+
+// MarkIngestStarted records when the relay first received a show's stream.
+// Later calls keep the first time.
+func (s *Service) MarkIngestStarted(ctx context.Context, showID uuid.UUID, at time.Time) error {
+	_, err := s.DB.Q(ctx).Exec(ctx,
+		`UPDATE shows SET ingest_started_at = $2 WHERE id = $1 AND ingest_started_at IS NULL`, showID, at)
+	return err
+}
+
+// RotateIngestKey invalidates a show's ingest key by bumping its version.
+func (s *Service) RotateIngestKey(ctx context.Context, showID uuid.UUID) (Show, error) {
+	tag, err := s.DB.Q(ctx).Exec(ctx,
+		`UPDATE shows SET ingest_key_version = ingest_key_version + 1, updated_at = now() WHERE id = $1`, showID)
+	if err != nil {
+		return Show{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Show{}, apperr.NotFound("show")
+	}
+	return s.Store.show(ctx, showID, false)
+}
+
+// SaveRelayCapture keeps a frame from the broadcast relay as a capture. The
+// frame's place in the stream is its arrival time minus the time the relay
+// first received the stream (no stream delay: relay frames arrive before
+// YouTube shows them).
+func (s *Service) SaveRelayCapture(ctx context.Context, showID, staffID uuid.UUID, jpeg []byte, at time.Time) (Capture, error) {
+	sh, err := s.Store.show(ctx, showID, false)
+	if err != nil {
+		return Capture{}, err
+	}
+	if sh.Status != ShowLive {
+		return Capture{}, apperr.Conflict("show_not_live", "frames can be captured while the show is live")
+	}
+	f, err := upload.StoreOriginalImage(ctx, s.Storage, storage.CapturePrefix, jpeg)
+	if err != nil {
+		return Capture{}, err
+	}
+	var offset *int
+	if start := sh.IngestStartedAt; start != nil || sh.StartedAt != nil {
+		if start == nil {
+			start = sh.StartedAt
+		}
+		sec := int(at.Sub(*start) / time.Second)
+		if sec < 0 {
+			sec = 0
+		}
+		offset = &sec
+	}
+	c := Capture{ID: ids.New(), ShowID: showID, ObjectKey: f.Key, ContentType: f.ContentType,
+		Width: f.Width, Height: f.Height, BroadcastOffsetSec: offset, Source: "relay", CreatedBy: &staffID}
 	if err := s.Store.insertCapture(ctx, c); err != nil {
 		_ = s.Storage.Delete(context.WithoutCancel(ctx), f.Key)
 		return Capture{}, err

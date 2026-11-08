@@ -2,6 +2,7 @@
 #   docker compose -f deploy/compose.dev.yaml up --build
 # Studio API: http://localhost:8080/studio-api  (owner@hglobal.test / owner-password)
 # Storefront API: http://localhost:8080/api
+# Storefront: run `npm run dev` in storefront/ (http://localhost:3000, forwards /api to :8080).
 name: hglobal-dev
 
 services:
@@ -35,8 +36,15 @@ services:
       HG_OWNER_EMAIL: owner@hglobal.test
       HG_OWNER_PASSWORD: owner-password
       HG_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001
+      # Broadcast relay: OBS streams SRT to localhost:9000 with the show's passphrase
+      # (GET /studio-api/shows/{id}/ingest). Set HG_YOUTUBE_STREAM_KEY to also push to YouTube.
+      HG_RELAY_ENABLED: "true"
+      HG_RELAY_PUBLIC_HOST: localhost:9000
+      HG_RELAY_SECRET: dev-only-relay-secret-change-me
+      HG_YOUTUBE_STREAM_KEY: ${HG_YOUTUBE_STREAM_KEY:-}
     ports:
       - "8080:8080"
+      - "9000:9000/udp"
     volumes:
       - storage:/data
 

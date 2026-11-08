@@ -23,7 +23,7 @@ hg-server's Phase 1 core is in [`hg-server/`](../../hg-server/README.md), with t
 [`api/openapi.yaml`](../../api/openapi.yaml).
 
 **Built:** accounts and staff roles; spontaneous products with options, variants, stock, holds and
-media; shows with preselected items, captures (uploaded), one-transaction quick listing, pinning,
+media; shows, captures (uploaded), one-transaction quick listing, pinning,
 sold out, keep listed and auto-hide; the viewer feed (SSE with replay); broadcast links and recaps;
 checkout with 10-minute holds and the customs code; the order lifecycle through inspection, customs
 check, shipping and delivery, with cancel and refund; the payment provider interface with a fake
@@ -45,9 +45,30 @@ feed; the four jobs.
 - Jobs run one at a time from one scheduler (running them in parallel could exhaust the connection
   pool).
 
-**Not built yet:** media relay and frame ring buffer (5.5), YouTube Data API, hg-agent (5.6),
-notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
-the internal API, storefront and hg-studio.
+**Broadcast relay prototype (2026-11-07):** built with ffmpeg instead of a separate media server,
+with an MJPEG preview instead of WebRTC. Frames reach hg-server about 0.5 s after the camera in
+local tests; see [docs/prototype/relay.md](../prototype/relay.md) for results, differences from
+5.5 and how to measure on H-Global's server.
+
+**hg-studio (2026-11-07):** built in Korean ([hg-studio/README.md](../../hg-studio/README.md)):
+sign-in, stream setup, the live console, orders (list, detail, inspection to delivery, cancel and
+refund), products (list, editing, photos, inspection media, stock per option), the after-stream
+screen (sales, keep listed, sale period, completion list, KakaoTalk recap text) and staff
+management. Tested end to end in a browser against hg-server and the relay. For these screens
+hg-server gained order search, order counts per status and sales per stream (5.7).
+
+**storefront (2026-11-08):** built in Korean ([storefront/README.md](../../storefront/README.md)),
+server-rendered with React Router: home (live banner, optional next-stream card), live page with
+live updates and the product sheet, recap, product page with share tags, email sign-in, checkout
+with the hold timer, postcode search and customs code, a test payment page for the fake provider,
+payment result and virtual account, my orders and order detail. Tested end to end in a browser from
+listing on air to receipt. hg-server gained `GET /api/orders/{id}/payment` (the virtual account
+again).
+
+**Not built yet:** YouTube Data API, hg-agent (5.6),
+notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses on the account
+(kept on the device for now), cart, reviews, 1:1 chat, the internal API, the recap share image
+(5.7), and editing a product's options after it is created.
 
 ## 1. Summary
 
@@ -275,11 +296,13 @@ available = unlimited until marked sold out          (stock_mode = until_sold_ou
 | Entity | Fields | Rules |
 |---|---|---|
 | **Show** | `id`, `youtube_video_id`, `title`, `scheduled_at`, `status` (`draft`, `scheduled`, `live`, `ended`), `started_at`, `ended_at`, `display_days_after`, `next_number`, `host_name`, `cs_user_id`, `ingest_key_hash`, `relay_state` | `started_at` is when the relay first received the stream (5.5). |
-| **Show item** | `id`, `show_id`, `number`, `source` (`preselected`, `captured`), `product_id`, `pinned`, `broadcast_offset_sec`, `capture_id`, `keep_listed`, `hide_at`, `published_at`, `published_by` | `number` is unique per show and **never reused or renumbered once the show is live**. |
+| **Show item** | `id`, `show_id`, `number`, `source` (`captured`, `matched`), `product_id`, `pinned`, `broadcast_offset_sec`, `capture_id`, `keep_listed`, `hide_at`, `published_at`, `published_by` | `number` is unique per show and **never reused or renumbered once the show is live**. |
 | **Capture** | `id`, `show_id`, `object_key`, `stream_pts_ms`, `broadcast_offset_sec`, `crop`, `source` (`relay`, `upload`) | A full-resolution frame from the relay's ring buffer (or an uploaded photo). The cropped image becomes the product's first photo. |
 
-- Preselected items (No. 1–8) can be reordered until the show starts; starting locks all numbers.
-- A captured item takes `next_number` inside its publishing transaction.
+- **Nothing is prepared before a stream.** A show starts with no items; every product is listed on
+  air, from No.1 (decided 2026-11-08, replacing the earlier "preselected No. 1–8"). `captured` is a
+  new product from a frame; `matched` is an existing catalog product shown again on air.
+- An item takes `next_number` inside its publishing transaction.
 - Ending a show sets `hide_at = ended_at + display_days_after` on every item not `keep_listed`.
 
 ### 5.2 Quick listing (the core flow)
@@ -315,7 +338,7 @@ hg-studio                               hg-server
   `event: item` · `data: {"type":"live.item_published","item":{…}}`.
 - Event types: `live.show_started`, `live.show_ended`, `live.show_updated`, `live.item_published`,
   `live.item_updated` (price, title, photos, stock, sold out), `live.item_pinned`,
-  `live.item_unpinned`, `live.item_removed`, `live.items_reordered`.
+  `live.item_unpinned`.
 - **Stock changes are pushed, not polled.** Holds, orders and cancels happen in the same process, so
   every catalog change to a featured product publishes `live.item_updated` with the full item.
   Merging repeated changes into one frame per second is not built yet.
@@ -616,6 +639,10 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
   (`P` + 12 digits) plus a staff confirmation. Later: Korea Customs (UNI-PASS) lookup, once API
   access is confirmed.
 - **shipped** requires a carrier and tracking number.
+- **Order number** `HG-YYMMDD-XXXXX` (e.g. `HG-261107-7KQ4M`): the order date in Korea time and five
+  random characters (digits 2–9 and consonants, so nothing to confuse and no words), which do not
+  reveal how many orders a day brings. Easy to read out on the phone or in KakaoTalk; the internal
+  ID stays a UUID.
 - Every change is an event: Telegram alerts for staff, email (later Kakao) to the customer, and a
   live update in Studio.
 
@@ -654,7 +681,9 @@ pending_payment ──paid──▶ paid ──▶ inspecting ──▶ customs_
 
 ### 7.1 Customer sign-in: email now, Kakao and phone later (D3)
 
-**Now:** email and password only (built: `/api/auth/register`, `/api/auth/login`). **Later**
+**Now:** email and password only (built: `/api/auth/register`, `/api/auth/login`). Sending email
+(SMTP) is deferred too (2026-11-07), so there is no password reset or email verification yet;
+until then a customer who forgets their password contacts staff. **Later**
 (on hold, 2026-11-07): Kakao and phone, designed below so adding them does not change existing
 accounts.
 
@@ -757,7 +786,7 @@ Migrations are plain SQL files in `migrations/`, applied in order on startup and
 | Phase | hg-server | storefront | hg-studio |
 |---|---|---|---|
 | **0 — Decide** (with the 11/08 design review) | Answer D1–D10. Agree this plan and `api/openapi.yaml` v0. | Design draft approved | Design draft approved |
-| **1 — MVP** (about 6–8 weeks; the apps are built alongside hg-server against the contract and a mock server) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock, media. Live: shows, preselected No. 1–8, **media relay to YouTube with frame tap and preview**, capture from the ring buffer, quick listing, pin, sold out, SSE feed, replay offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. | Home (live banner, next stream), live page with SSE, product sheet and page, cart, checkout with hold timer and customs number, sign-in, order history. | Sign-in, stream setup (ingest URL and key), live console (relay preview, capture with step-back, quick listing, published list, pin, sold out, YouTube push status), order handling (inspection, customs check, ship, refund), product editing. |
+| **1 — MVP** (about 6–8 weeks; the apps are built alongside hg-server against the contract and a mock server) | Platform (config, DB, migrations, sessions, SSE hub, jobs, storage). Accounts and staff roles. Catalog with spontaneous products, options, variants, stock, media. Live: shows (items listed on air from No.1), **media relay to YouTube with frame tap and preview**, capture from the ring buffer, quick listing, pin, sold out, SSE feed, replay offsets, auto-hide. Checkout with holds; orders through shipping; one payment provider; Telegram alerts; email for paid and shipped. | Home (live banner, next stream), live page with SSE, product sheet and page, cart, checkout with hold timer and customs number, sign-in, order history. | Sign-in, stream setup (ingest URL and key), live console (relay preview, capture with step-back, quick listing, published list, pin, sold out, YouTube push status), order handling (inspection, customs check, ship, refund), product editing. |
 | **2 — Match and follow up** (about 3–4 weeks) | **Agent listing proposals (5.6)**: the `--agent` mode, `/internal-api`, speech-to-text; image matching (pgvector); recap; completion list; console stats per show; 1:1 chat; inspection media on the product page. | Recap page, chat, inspection section on the product page. | Agent proposals and match suggestions in quick listing, after-stream screen, chat inbox, console stats. |
 | **3 — Later** | Kakao messages, stream reminders, YouTube chat, customs number lookup, reviews, analytics per item. | Reminders, reviews. | Analytics. |
 
@@ -770,7 +799,7 @@ involved:
    hg-studio; product page in storefront.
 3. **Broadcast relay:** media-relay container, ingest keys, copy to YouTube, frame ring buffer and
    preview, with a test stream from OBS; the YouTube push status in hg-studio.
-4. **Live listing:** shows, preselected items, captures and quick listing in hg-server; stream setup
+4. **Live listing:** shows, captures and quick listing in hg-server; stream setup
    and the live console in hg-studio.
 5. **Live feed:** events, SSE hub, in-memory show snapshot and stock push in hg-server; the live page
    in storefront updates without reload.

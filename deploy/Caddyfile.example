@@ -1,0 +1,43 @@
+# Production on H-Global's server (plan 7.2). Caddy gets HTTPS certificates
+# automatically. Replace the domains; hg-server listens on :8080 inside the
+# Docker network. `handle` blocks keep the API from being rewritten to
+# index.html by the single-page-app fallback.
+
+studio.hglobal.example {
+	handle /studio-api/* {
+		reverse_proxy hg-server:8080 {
+			# Server-Sent Events and the MJPEG preview must not be buffered.
+			flush_interval -1
+		}
+	}
+	handle /media/* {
+		reverse_proxy hg-server:8080
+	}
+	handle {
+		# H-Global Studio: static files from `npm run build` in hg-studio/
+		root * /srv/hg-studio
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+hglobal.example {
+	# Customer API and its event streams (live page), on the site's own origin
+	# so the session cookie stays first-party.
+	handle /api/* {
+		reverse_proxy hg-server:8080 {
+			flush_interval -1
+		}
+	}
+	handle /media/* {
+		reverse_proxy hg-server:8080
+	}
+	# Payment provider webhooks.
+	handle /hooks/* {
+		reverse_proxy hg-server:8080
+	}
+	handle {
+		# storefront: the server-rendered app (`npm start` in storefront/, or its Dockerfile)
+		reverse_proxy storefront:3000
+	}
+}

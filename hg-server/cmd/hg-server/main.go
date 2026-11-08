@@ -81,6 +81,12 @@ func run(runHTTP, runJobs, migrateOnly bool) error {
 		<-ctx.Done()
 		return nil
 	}
+	// The relay fills the frame buffer the Studio routes serve, so it runs in
+	// the HTTP process.
+	if cfg.Relay.Enabled {
+		go a.Relay.Run(jobCtx)
+		slog.Info("relay enabled", "listen", cfg.Relay.Listen, "youtube_push", cfg.Relay.YouTubeKey != "")
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
