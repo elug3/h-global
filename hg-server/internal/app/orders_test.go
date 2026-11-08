@@ -48,14 +48,16 @@ func TestOrderSearchCountsAndShowSales(t *testing.T) {
 	bagV := bag["variants"].([]any)[0].(obj)["id"].(string)
 	scarfV := scarf["variants"].([]any)[0].(obj)["id"].(string)
 
+	// Starts a stream and lists the products on air, as the CS rep does.
 	newShow := func(title string, products ...obj) (string, []string) {
 		var sh obj
 		staff.do("POST", "/studio-api/shows", obj{"title": title}, 201, &sh)
 		id := sh["id"].(string)
+		staff.do("POST", "/studio-api/shows/"+id+"/start", nil, 200, nil)
 		var items []string
 		for _, p := range products {
 			var it obj
-			staff.do("POST", "/studio-api/shows/"+id+"/items", obj{"product_id": p["id"]}, 201, &it)
+			staff.do("POST", "/studio-api/shows/"+id+"/items/quick", obj{"product_id": p["id"]}, 201, &it)
 			items = append(items, it["id"].(string))
 		}
 		return id, items
@@ -65,7 +67,6 @@ func TestOrderSearchCountsAndShowSales(t *testing.T) {
 	placeOrder(t, base, bagV, 1, "Early", "010-0000-0001", true)
 
 	show1, items1 := newShow("First", bag, scarf)
-	staff.do("POST", "/studio-api/shows/"+show1+"/start", nil, 200, nil)
 	mina := placeOrder(t, base, bagV, 2, "Kim Mina", "010-1234-5678", true)
 	placeOrder(t, base, scarfV, 1, "Lee Jun", "010-2222-3333", true)
 	placeOrder(t, base, bagV, 1, "Unpaid", "010-4444-5555", false)
@@ -75,7 +76,6 @@ func TestOrderSearchCountsAndShowSales(t *testing.T) {
 
 	// The bag is shown again: its later orders count for the second stream.
 	show2, _ := newShow("Second", bag)
-	staff.do("POST", "/studio-api/shows/"+show2+"/start", nil, 200, nil)
 	placeOrder(t, base, bagV, 1, "Later", "010-8888-9999", true)
 	placeOrder(t, base, scarfV, 3, "Scarf later", "010-1111-2222", true) // scarf still counts for the first
 

@@ -38,8 +38,6 @@ export const LIVE_EVENTS = [
   "live.item_updated",
   "live.item_pinned",
   "live.item_unpinned",
-  "live.item_removed",
-  "live.items_reordered",
 ];
 
 /** Event types of /studio-api/orders/events. */

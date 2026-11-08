@@ -155,21 +155,9 @@ kbd { font-family: inherit; font-size: 12px; font-weight: 600; background: rgba(
 .col { display: flex; flex-direction: column; gap: 20px; }
 .copy-row { display: flex; gap: 8px; align-items: center; }
 .copy-row code { flex: 1; font-size: 12px; background: var(--surface); padding: 10px 12px; border-radius: 10px; overflow-wrap: anywhere; }
-.pre-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.pre-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 12px; background: #fff; }
-.pre-row[draggable="true"] { cursor: grab; }
-.pre-row.dragging { opacity: 0.4; }
-.pre-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.pre-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-actions { display: flex; }
-.grip { color: var(--ink-3); display: flex; }
+.howto { list-style: none; margin: 0; padding: 12px 14px; background: var(--surface); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
+.howto li { display: flex; gap: 10px; align-items: center; }
 .thumb { border-radius: 8px; object-fit: cover; background: var(--surface); flex-shrink: 0; display: inline-block; }
-.add-products { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
-.results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.result-row { display: flex; gap: 10px; align-items: center; }
-.new-product summary { cursor: pointer; font-weight: 700; font-size: 13px; }
-.new-product-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px; }
-.new-product-form .field:nth-child(2) input { width: 120px; }
 
 /* Live console */
 .console { min-height: 100vh; display: flex; flex-direction: column; background: var(--page); }

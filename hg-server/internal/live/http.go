@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/elug3/h-global/hg-server/internal/platform/apperr"
 	"github.com/elug3/h-global/hg-server/internal/platform/auth"
 	"github.com/elug3/h-global/hg-server/internal/platform/httpx"
@@ -30,10 +28,6 @@ func (h *Handler) RegisterStudio(rt *httpx.Router) {
 	cs.Handle("POST", "/shows/{id}/start", h.start)
 	cs.Handle("POST", "/shows/{id}/end", h.end)
 	cs.Handle("GET", "/shows/{id}/events", h.events)
-
-	mgr.Handle("POST", "/shows/{id}/items", h.addPreselected)
-	mgr.Handle("DELETE", "/shows/{id}/items/{item_id}", h.removeItem)
-	mgr.Handle("PUT", "/shows/{id}/items/order", h.reorder)
 
 	cs.Handle("POST", "/shows/{id}/captures", h.saveCapture)
 	cs.Handle("GET", "/captures/{id}", h.capture)
@@ -154,57 +148,6 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) error {
 func isStaff(r *http.Request) bool {
 	p, ok := auth.FromContext(r.Context())
 	return ok && p.Kind == auth.KindStaff
-}
-
-func (h *Handler) addPreselected(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpx.PathID(r, "id")
-	if err != nil {
-		return err
-	}
-	var in struct {
-		ProductID uuid.UUID `json:"product_id"`
-	}
-	if err := httpx.Decode(r, &in); err != nil {
-		return err
-	}
-	it, err := h.Svc.AddPreselected(r.Context(), id, in.ProductID, auth.MustPrincipal(r.Context()).ID)
-	if err != nil {
-		return err
-	}
-	return httpx.JSON(w, http.StatusCreated, it)
-}
-
-func (h *Handler) removeItem(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpx.PathID(r, "id")
-	if err != nil {
-		return err
-	}
-	itemID, err := httpx.PathID(r, "item_id")
-	if err != nil {
-		return err
-	}
-	if err := h.Svc.RemoveItem(r.Context(), id, itemID); err != nil {
-		return err
-	}
-	return httpx.NoContent(w)
-}
-
-func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpx.PathID(r, "id")
-	if err != nil {
-		return err
-	}
-	var in struct {
-		ItemIDs []uuid.UUID `json:"item_ids"`
-	}
-	if err := httpx.Decode(r, &in); err != nil {
-		return err
-	}
-	items, err := h.Svc.Reorder(r.Context(), id, in.ItemIDs)
-	if err != nil {
-		return err
-	}
-	return httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (h *Handler) saveCapture(w http.ResponseWriter, r *http.Request) error {

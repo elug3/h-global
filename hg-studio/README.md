@@ -11,7 +11,7 @@ It talks only to hg-server's `/studio-api`, typed from [`../api/openapi.yaml`](.
 |---|---|---|
 | 로그인 (sign-in) | `/login` | Staff email and password. The session is an HttpOnly cookie set by hg-server. |
 | 방송 (streams) | `/shows` | List of streams; managers create one. Ended streams open 방송 후 정리. |
-| 방송 준비 (stream setup) | `/shows/:id/setup` | Title, YouTube link, schedule, host, days on sale after the stream, "공개 예정" toggle; OBS ingest URL with copy and key rotation; preselected items No. 1–8 with drag (or ▲▼) reordering, product search and quick "새 상품 만들기"; 방송 시작. |
+| 방송 준비 (stream setup) | `/shows/:id/setup` | Title, YouTube link, schedule, host, days on sale after the stream, "공개 예정" toggle; OBS ingest URL with copy and key rotation; **방송 중 상품 등록**: how listing works on air (nothing is prepared in advance; the first product listed is No.1) and recently used colors and sizes; 방송 시작. |
 | 라이브 콘솔 (live console) | `/shows/:id/live` | Three columns, no page changes during a stream: **방송 화면** (relay preview, 캡처 with Space, 직전 장면에서 고르기, paste Ctrl+V, file upload, recent captures) · **빠른 등록** (drag to crop, name, price, color and size chips from recently used values or new ones with a swatch color, quantity or "수량 모름", publish as the next number, retry-safe) · **등록 상품** (newest first, sold/stock, pin "오늘 착용/소지", price edit, 품절 처리). Top bar: LIVE timer, relay and YouTube push status, 방송 종료. Live updates over SSE. |
 | 방송 후 정리 (after the stream) | `/shows/:id/after` | Sales of this stream (판매액, 주문, 수량, 결제 대기, 취소·환불, 방송 시간) and per item; **계속 판매** per item and the hide date of the others; **방송 후 판매 기간** (changing it moves the hide dates); **정보 입력이 필요한 상품** (no real name or no description yet) with a link to fill them in; **다시보기 공유**: the KakaoTalk post text (items, prices, time in the replay, sale end) to copy. |
 | 주문 (orders) | `/orders` | Tabs by status with counts (default **처리 필요** = 결제 완료, 검수 중, 통관 확인), search by order number, recipient or phone, live updates; the menu badge shows orders waiting for staff. |
@@ -79,11 +79,11 @@ e2e/                     Playwright tests
 server, then Chromium runs two tests:
 
 1. **`live-console.spec.ts`**: sign-in (wrong password, then right) → create a stream → YouTube
-   link, host, 공개 예정, save → create a product as No.1 → read the OBS ingest URL → 방송 시작 →
+   link, host, 공개 예정, save → "미리 준비하는 상품은 없습니다" → read the OBS ingest URL → 방송 시작 →
    an ffmpeg test broadcast connects with that URL → relay shows 수신 중 → capture with Space →
-   drag to crop → price, colors, size, 수량 모름 → No.2 등록 → listed with ₩89,000 → pin → the
+   drag to crop → price, colors, size, 수량 모름 → No.1 등록 → listed with ₩89,000 → pin → the
    colors just typed come back as suggestions → 방송 종료.
-2. **`orders-after-stream.spec.ts`**: through the API, a stream with two products, three customer
+2. **`orders-after-stream.spec.ts`**: through the API, a stream that lists two products on air, three customer
    orders (two paid with the fake provider, one unpaid) and the end of the stream; then in the
    browser: the menu badge and 처리 필요 tab → a new order appears live → filter and search → one
    order through inspection photo, customs check, shipping, delivery and 구매 확정 with its history

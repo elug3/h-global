@@ -25,11 +25,11 @@ const (
 	ShowEnded     = "ended"
 )
 
-// Item sources.
+// Item sources. Every item is listed on air: nothing is prepared before the
+// stream, and numbers start at No.1 with the first listing.
 const (
-	SourcePreselected = "preselected" // picked before the stream (No. 1-8)
-	SourceCaptured    = "captured"    // listed on air from a captured frame
-	SourceMatched     = "matched"     // an existing product added on air
+	SourceCaptured = "captured" // listed on air from a captured frame
+	SourceMatched  = "matched"  // an existing product added on air
 )
 
 // NewBadgeFor is how long an item listed on air shows as NEW.

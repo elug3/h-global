@@ -85,10 +85,10 @@ schemas = {
   "ShowPatch": obj({"title": S(), "youtube_url": S(), "scheduled_at": TIME, "display_days_after": I(), "host_name": S(),
       "status": S(enum=["draft", "scheduled"])}),
   "Item": obj({"id": UUID, "show_id": UUID, "number": I("Never reused or renumbered once the show is live."),
-      "source": S(enum=["preselected", "captured", "matched"]), "product_id": UUID, "pinned": B("Worn or held today."),
+      "source": S(enum=["captured", "matched"], desc="captured: new product from a frame; matched: an existing product shown on air."), "product_id": UUID, "pinned": B("Worn or held today."),
       "capture_id": nullable(UUID), "broadcast_offset_sec": nullable(I()), "keep_listed": B(),
       "hide_at": nullable(TIME), "hidden_at": nullable(TIME), "published_at": TIME, "published_by": nullable(UUID)}),
-  "ItemView": obj({"id": UUID, "number": I(), "source": S(enum=["preselected", "captured", "matched"]), "pinned": B(),
+  "ItemView": obj({"id": UUID, "number": I(), "source": S(enum=["captured", "matched"], desc="captured: new product from a frame; matched: an existing product shown on air."), "pinned": B(),
       "is_new": B("Listed on air in the last 15 minutes."), "published_at": TIME, "broadcast_offset_sec": nullable(I()),
       "replay_url": S("youtube.com/watch?v={id}&t={offset}s, or empty."), "product": ref("PublicProduct")}),
   "StudioItem": {"allOf": [ref("Item"), obj({"replay_url": S(), "product": ref("Product")})]},
@@ -269,15 +269,10 @@ op("POST", "/studio-api/shows", "studio-live", "Create a show." + role("manager"
 op("GET", "/studio-api/shows/{id}", "studio-live", "Show with items and full products." + role("cs"), resp(ref("StudioShow")), STAFF)
 op("PATCH", "/studio-api/shows/{id}", "studio-live", "Change a show." + role("manager"), resp(ref("Show")), STAFF, request=body(ref("ShowPatch")))
 op("POST", "/studio-api/shows/{id}/start", "studio-live", "Go live." + role("cs"), resp(ref("Show")), STAFF,
-   desc="Locks item numbers; preselected draft or hidden products go live. 409 another_show_live.")
+   desc="The show starts with no items: every product is listed on air, numbered from No.1. 409 another_show_live.")
 op("POST", "/studio-api/shows/{id}/end", "studio-live", "End the show." + role("cs"), resp(ref("Show")), STAFF,
    desc="Items not kept listed are hidden display_days_after days later.")
 op("GET", "/studio-api/shows/{id}/events", "studio-live", "Show event stream (staff)." + role("cs"), SSE, STAFF)
-op("POST", "/studio-api/shows/{id}/items", "studio-live", "Preselect a product as the next number." + role("manager"), resp(ref("Item"), "Created", "201"), STAFF,
-   request=body(obj({"product_id": UUID}, ["product_id"])))
-op("DELETE", "/studio-api/shows/{id}/items/{item_id}", "studio-live", "Remove a preselected item before the show starts." + role("manager"), resp(desc="Removed", status="204"), STAFF)
-op("PUT", "/studio-api/shows/{id}/items/order", "studio-live", "Reorder preselected items before the show starts." + role("manager"),
-   resp(items_of(ref("Item"))), STAFF, request=body(obj({"item_ids": arr(UUID)}, ["item_ids"])))
 op("POST", "/studio-api/shows/{id}/captures", "studio-live", "Upload a captured frame." + role("cs"), resp(ref("Capture"), "Created", "201"), STAFF,
    request=upload_body({}), desc="Stored unchanged (JPEG or PNG). broadcast_offset_sec is set while the show is live.")
 op("GET", "/studio-api/captures/{id}", "studio-live", "Capture details." + role("cs"), resp(ref("Capture")), STAFF)
@@ -301,7 +296,7 @@ op("GET", "/api/shows", "live", "Ended shows (recaps)", resp(items_of(ref("Show"
 op("GET", "/api/shows/{id}", "live", "Live page snapshot", resp(ref("ShowView")), [])
 op("GET", "/api/shows/{id}/events", "live", "Live page event stream", SSE, [],
    desc="Event types: live.show_started, live.show_ended, live.show_updated, live.item_published, live.item_updated "
-        "(price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned, live.item_removed, live.items_reordered. "
+        "(price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned. "
         "Item events carry the full ItemView in data.item.")
 op("GET", "/api/shows/{id}/recap", "live", "Recap of an ended show", resp(ref("ShowView")), [], desc="409 show_not_ended before the show ends.")
 op("GET", "/api/products/{id}/broadcasts", "live", "Where a product was shown, with replay links", resp(items_of(ref("Broadcast"))), [])

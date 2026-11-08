@@ -775,7 +775,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-      description: Locks item numbers; preselected draft or hidden products go live. 409 another_show_live.
+      description: 'The show starts with no items: every product is listed on air, numbered from No.1. 409 another_show_live.'
       security:
       - staffSession: []
     parameters:
@@ -834,122 +834,6 @@ paths:
                 $ref: '#/components/schemas/Error'
       security:
       - staffSession: []
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-  /studio-api/shows/{id}/items:
-    post:
-      tags:
-      - studio-live
-      summary: 'Preselect a product as the next number. Role: manager or higher.'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Item'
-        default:
-          description: Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      security:
-      - staffSession: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                product_id:
-                  type: string
-                  format: uuid
-              required:
-              - product_id
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-  /studio-api/shows/{id}/items/{item_id}:
-    delete:
-      tags:
-      - studio-live
-      summary: 'Remove a preselected item before the show starts. Role: manager or higher.'
-      responses:
-        '204':
-          description: Removed
-        default:
-          description: Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      security:
-      - staffSession: []
-    parameters:
-    - name: id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    - name: item_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-  /studio-api/shows/{id}/items/order:
-    put:
-      tags:
-      - studio-live
-      summary: 'Reorder preselected items before the show starts. Role: manager or higher.'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Item'
-                required:
-                - items
-        default:
-          description: Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-      security:
-      - staffSession: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                item_ids:
-                  type: array
-                  items:
-                    type: string
-                    format: uuid
-              required:
-              - item_ids
     parameters:
     - name: id
       in: path
@@ -1319,8 +1203,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       description: 'Event types: live.show_started, live.show_ended, live.show_updated, live.item_published, live.item_updated
-        (price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned, live.item_removed, live.items_reordered.
-        Item events carry the full ItemView in data.item.'
+        (price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned. Item events carry the full ItemView
+        in data.item.'
       security: []
     parameters:
     - name: id
@@ -3259,9 +3143,9 @@ components:
         source:
           type: string
           enum:
-          - preselected
           - captured
           - matched
+          desc: 'captured: new product from a frame; matched: an existing product shown on air.'
         product_id:
           type: string
           format: uuid
@@ -3322,9 +3206,9 @@ components:
         source:
           type: string
           enum:
-          - preselected
           - captured
           - matched
+          desc: 'captured: new product from a frame; matched: an existing product shown on air.'
         pinned:
           type: boolean
         is_new:

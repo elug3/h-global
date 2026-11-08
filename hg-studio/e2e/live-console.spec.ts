@@ -43,13 +43,8 @@ test("stream setup to quick listing in the live console", async ({ page }) => {
   await page.getByRole("button", { name: "저장" }).click();
   await expect(page.getByText("저장했습니다")).toBeVisible();
 
-  // A preselected product, made on the spot: it becomes No.1.
-  await page.getByText("새 상품 만들기").click();
-  await page.getByLabel("상품 이름").fill("퀼팅 체인백");
-  await page.getByLabel("가격 (원)").fill("149000");
-  await page.getByRole("button", { name: "추가", exact: true }).click();
-  await expect(page.locator(".pre-row")).toHaveCount(1);
-  await expect(page.locator(".pre-row")).toContainText("퀼팅 체인백");
+  // Nothing is prepared in advance: products are listed on air from No.1.
+  await expect(page.getByTestId("on-air-listing")).toContainText("미리 준비하는 상품은 없습니다");
 
   const ingest = (await page.getByTestId("ingest-url").textContent()) ?? "";
   expect(ingest).toMatch(/^srt:\/\/127\.0\.0\.1:19010\?passphrase=[A-Z2-7]{32}&latency=300000$/);
@@ -79,7 +74,7 @@ test("stream setup to quick listing in the live console", async ({ page }) => {
     await page.mouse.up();
     await expect(crop.locator(".crop-rect")).toBeVisible();
 
-    // Price and options, then publish as No.2.
+    // Price and options, then publish as No.1.
     await page.getByLabel("가격", { exact: true }).fill("89000");
     await page.getByLabel("새 색상 이름").fill("브라운");
     await page.getByLabel("새 색상 이름").press("Enter");
@@ -89,12 +84,12 @@ test("stream setup to quick listing in the live console", async ({ page }) => {
     await page.getByLabel("새 사이즈").press("Enter");
     await page.getByText("수량 모름 — 품절 처리 전까지 판매").click();
     await shot(page, "2-quick-listing");
-    await page.getByRole("button", { name: "No.2 등록" }).click();
-    await expect(page.getByText("No.2 등록 완료")).toBeVisible();
+    await page.getByRole("button", { name: "No.1 등록" }).click();
+    await expect(page.getByText("No.1 등록 완료")).toBeVisible();
 
     const list = page.getByTestId("published");
-    await expect(list.locator(".pub-row")).toHaveCount(2);
-    await expect(list.locator(".pub-row").first()).toContainText("Live #2");
+    await expect(list.locator(".pub-row")).toHaveCount(1);
+    await expect(list.locator(".pub-row").first()).toContainText("Live #1");
     await expect(list.locator(".pub-row").first()).toContainText("₩89,000");
 
     // Pin the new item as worn or held today.
@@ -108,7 +103,7 @@ test("stream setup to quick listing in the live console", async ({ page }) => {
     await expect(brown).toHaveAttribute("aria-pressed", "false");
     await page.keyboard.press("Space");
     await expect(page.locator(".capture")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "No.3 등록" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "No.2 등록" })).toBeVisible();
   } finally {
     pub.kill("SIGKILL");
   }

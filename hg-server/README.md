@@ -21,7 +21,7 @@ decisions are in [`../docs/plan/backend-plan.md`](../docs/plan/backend-plan.md).
 | Staff accounts and roles (`cs` < `manager` < `owner`), customer accounts, sessions | Built |
 | Products created on the spot: photo + price required, free-form options with swatch colors, every option combination becomes a variant | Built |
 | Stock: counted or "until sold out", holds that can never oversell, recently used option values | Built |
-| Streams (shows): preselected No. 1–8, numbers locked at start, one live show at a time | Built |
+| Streams (shows): no products prepared in advance; items are listed on air from No.1, numbers never change; one live show at a time | Built |
 | Capture upload and **quick listing in one transaction** (product, options, stock, photo, numbered item, viewer event) with idempotency | Built |
 | Pin "worn or held today", sold out, keep listed, auto-hide N days after the stream | Built |
 | Live feed to viewers (Server-Sent Events) with replay from `last_event_id`; stock changes pushed | Built |

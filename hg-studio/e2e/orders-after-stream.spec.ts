@@ -50,7 +50,7 @@ async function signIn(page: Page) {
 }
 
 test("orders from a stream, then the after-stream screen, products and staff", async ({ page }) => {
-  // Setup through the API: two products in a stream, three orders, stream ended.
+  // Setup through the API: a stream lists two products on air, three orders, stream ended.
   const staff = await request.newContext({ baseURL: SERVER });
   await call(staff, "POST", "/studio-api/auth/login", { email: "owner@hglobal.test", password: "owner-password" });
   const tote = await call(staff, "POST", "/studio-api/products", {
@@ -70,8 +70,9 @@ test("orders from a stream, then the after-stream screen, products and staff", a
     youtube_url: "https://youtu.be/dQw4w9WgXcQ",
     status: "scheduled",
   });
-  for (const p of [tote, wallet]) await call(staff, "POST", `/studio-api/shows/${show.id}/items`, { product_id: p.id });
   await call(staff, "POST", `/studio-api/shows/${show.id}/start`);
+  // Listed on air as No.1 and No.2 (existing products shown in the stream).
+  for (const p of [tote, wallet]) await call(staff, "POST", `/studio-api/shows/${show.id}/items/quick`, { product_id: p.id });
   const brown = tote.variants.find((v: Json) => v.label === "브라운").id;
   const walletV = wallet.variants[0].id;
   await buy(brown, 1, "김민아", true);

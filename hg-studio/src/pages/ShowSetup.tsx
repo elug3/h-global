@@ -1,12 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ApiError, api, call, errorText, type Ingest, type Product, type StudioItem, type StudioShow } from "../api/client";
+import { ApiError, api, call, errorText, type Ingest, type StudioShow, type Suggestion } from "../api/client";
 import { useAuth } from "../auth";
 import { Icon } from "../components/Icon";
-import { stockText, Thumb } from "../components/product";
-import { CopyButton, ErrorBanner, NumberBadge, StatusTag, Stepper, Toggle } from "../components/ui";
+import { COLOR, SIZE } from "../components/OptionPicker";
+import { CopyButton, ErrorBanner, StatusTag, Stepper, Swatch, Toggle } from "../components/ui";
 import { t } from "../i18n/ko";
-import { fromLocalInput, toLocalInput, won } from "../lib/format";
+import { fromLocalInput, toLocalInput } from "../lib/format";
 import { useLoad } from "../lib/hooks";
 
 export function ShowSetup() {
@@ -60,9 +60,11 @@ export function ShowSetup() {
       <div className="setup-grid">
         <div className="col">
           <DetailsForm show={sh} editable={editable} onSaved={(s) => show.setData({ ...sh, ...s })} />
-          {editable && <IngestCard showId={id} />}
         </div>
-        <Preselected show={sh} editable={editable && before} reload={show.reload} />
+        <div className="col">
+          {editable && <IngestCard showId={id} />}
+          <OnAirListing />
+        </div>
       </div>
     </div>
   );
@@ -213,212 +215,46 @@ function IngestCard({ showId }: { showId: string }) {
   );
 }
 
-function Preselected({ show, editable, reload }: { show: StudioShow; editable: boolean; reload: () => Promise<void> }) {
-  const [items, setItems] = useState<StudioItem[]>(show.items);
-  const [error, setError] = useState<string>();
-  const [dragging, setDragging] = useState<string>();
-  useEffect(() => setItems(show.items), [show.items]);
-
-  async function saveOrder(next: StudioItem[]) {
-    setItems(next);
-    try {
-      await call(
-        api.PUT("/studio-api/shows/{id}/items/order", {
-          params: { path: { id: show.id } },
-          body: { item_ids: next.map((i) => i.id) },
-        }),
-      );
-      await reload();
-    } catch (e) {
-      setError(errorText(e));
-      await reload();
-    }
-  }
-
-  function move(from: number, to: number) {
-    if (to < 0 || to >= items.length || from === to) return;
-    const next = [...items];
-    const [it] = next.splice(from, 1);
-    next.splice(to, 0, it);
-    void saveOrder(next);
-  }
-
-  async function remove(itemId: string) {
-    try {
-      await call(
-        api.DELETE("/studio-api/shows/{id}/items/{item_id}", { params: { path: { id: show.id, item_id: itemId } } }),
-      );
-      await reload();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
-
-  async function add(productId: string) {
-    try {
-      await call(api.POST("/studio-api/shows/{id}/items", { params: { path: { id: show.id } }, body: { product_id: productId } }));
-      await reload();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
-
+/** How products get listed: all on air, from No.1, with recently used options. */
+function OnAirListing() {
+  const [colors, setColors] = useState<Suggestion[]>([]);
+  const [sizes, setSizes] = useState<Suggestion[]>([]);
+  useEffect(() => {
+    const load = (option: string, set: (s: Suggestion[]) => void) =>
+      call(api.GET("/studio-api/catalog/suggestions", { params: { query: { option } } }))
+        .then((r) => set(r.items.slice(0, 8)))
+        .catch(() => set([]));
+    load(COLOR, setColors);
+    load(SIZE, setSizes);
+  }, []);
+  const recent = [...colors, ...sizes].filter((v, i, all) => all.findIndex((x) => x.label === v.label) === i);
   return (
-    <section className="card section">
-      <div className="section-head">
-        <div>
-          <h2>{t.setup.preselected}</h2>
-          <p className="muted small">{editable ? t.setup.preselectedHint : t.setup.preselectedLocked}</p>
-        </div>
-        <span className="count">{items.length}</span>
-      </div>
-      <ErrorBanner text={error} />
-      {items.length === 0 ? (
-        <p className="muted empty">{t.setup.noItems}</p>
-      ) : (
-        <ol className="pre-list">
-          {items.map((it, idx) => (
-            <li
-              key={it.id}
-              className={"pre-row" + (dragging === it.id ? " dragging" : "")}
-              draggable={editable}
-              onDragStart={() => setDragging(it.id)}
-              onDragEnd={() => setDragging(undefined)}
-              onDragOver={(e) => editable && e.preventDefault()}
-              onDrop={() => {
-                const from = items.findIndex((x) => x.id === dragging);
-                if (from >= 0) move(from, idx);
-                setDragging(undefined);
-              }}
-            >
-              {editable && (
-                <span className="grip" aria-hidden="true">
-                  <Icon name="grip" size={18} />
-                </span>
-              )}
-              <NumberBadge n={it.number} size="s" />
-              <Thumb product={it.product} />
-              <div className="pre-main">
-                <b>{it.product.title}</b>
-                <span className="muted small">
-                  {won(it.product.price_won)} · {stockText(it.product)}
-                </span>
-              </div>
-              {editable && (
-                <div className="row-actions">
-                  <button className="icon-btn" aria-label={t.setup.moveUp} onClick={() => move(idx, idx - 1)}>
-                    <Icon name="up" size={18} />
-                  </button>
-                  <button className="icon-btn" aria-label={t.setup.moveDown} onClick={() => move(idx, idx + 1)}>
-                    <Icon name="down" size={18} />
-                  </button>
-                  <button className="icon-btn" aria-label={t.app.remove} onClick={() => void remove(it.id)}>
-                    <Icon name="close" size={18} />
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-      {editable && <AddProducts exclude={items.map((i) => i.product_id)} onAdd={add} />}
-    </section>
-  );
-}
-
-function AddProducts({ exclude, onAdd }: { exclude: string[]; onAdd: (productId: string) => Promise<void> }) {
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState<Product[]>();
-  const [newTitle, setNewTitle] = useState("");
-  const [newPrice, setNewPrice] = useState("");
-  const [newQty, setNewQty] = useState(1);
-  const [error, setError] = useState<string>();
-
-  async function search(e: FormEvent) {
-    e.preventDefault();
-    try {
-      const res = await call(
-        api.GET("/studio-api/products", { params: { query: { q, status: "draft,live,hidden", limit: 20 } } }),
-      );
-      setResults(res.items);
-    } catch (err) {
-      setError(errorText(err));
-    }
-  }
-
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    setError(undefined);
-    try {
-      const p = await call(
-        api.POST("/studio-api/products", {
-          body: { title: newTitle, price_won: Number(newPrice), status: "draft", stock: { mode: "counted", qty: newQty } },
-        }),
-      );
-      await onAdd(p.id);
-      setNewTitle("");
-      setNewPrice("");
-      setNewQty(1);
-    } catch (err) {
-      setError(errorText(err));
-    }
-  }
-
-  return (
-    <div className="add-products">
-      <form className="row" onSubmit={search}>
-        <input
-          className="grow"
-          aria-label={t.setup.searchProducts}
-          placeholder={t.setup.searchPlaceholder}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <button className="btn btn-secondary">{t.app.search}</button>
-      </form>
-      {results && (
-        <ul className="results">
-          {results.length === 0 && <li className="muted small">{t.setup.noResults}</li>}
-          {results
-            .filter((p) => !exclude.includes(p.id))
-            .map((p) => (
-              <li key={p.id} className="result-row">
-                <Thumb product={p} size={36} />
-                <span className="grow">
-                  <b>{p.title}</b> <span className="muted small">{won(p.price_won)}</span>
-                </span>
-                <button className="btn btn-secondary btn-sm" onClick={() => void onAdd(p.id)}>
-                  {t.app.add}
-                </button>
-              </li>
+    <section className="card section" data-testid="on-air-listing">
+      <h2>{t.setup.onAir}</h2>
+      <ol className="howto">
+        {t.setup.onAirSteps.map((step, i) => (
+          <li key={i}>
+            <span className="sn">{i + 1}</span>
+            {step}
+          </li>
+        ))}
+      </ol>
+      <p className="muted small">{t.setup.noPreparation}</p>
+      <div className="field">
+        <span>{t.setup.recentOptions}</span>
+        {recent.length === 0 ? (
+          <p className="muted small">{t.setup.noRecentOptions}</p>
+        ) : (
+          <div className="chips">
+            {recent.map((v) => (
+              <span key={v.label} className="chip">
+                <Swatch hex1={v.hex1} hex2={v.hex2} size={12} />
+                {v.label}
+              </span>
             ))}
-        </ul>
-      )}
-      <details className="new-product">
-        <summary>{t.setup.newProduct}</summary>
-        <form className="new-product-form" onSubmit={create}>
-          <label className="field grow">
-            <span>{t.setup.productTitle}</span>
-            <input required maxLength={200} value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>{t.setup.price}</span>
-            <input
-              required
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={newPrice}
-              onChange={(e) => setNewPrice(e.target.value.replace(/\D/g, ""))}
-            />
-          </label>
-          <div className="field">
-            <span>{t.setup.stock}</span>
-            <Stepper label={t.setup.stock} value={newQty} min={0} onChange={setNewQty} />
           </div>
-          <button className="btn btn-primary">{t.app.add}</button>
-        </form>
-      </details>
-      <ErrorBanner text={error} />
-    </div>
+        )}
+      </div>
+    </section>
   );
 }

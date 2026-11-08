@@ -1193,7 +1193,7 @@ export interface paths {
         put?: never;
         /**
          * Go live. Role: cs or higher.
-         * @description Locks item numbers; preselected draft or hidden products go live. 409 another_show_live.
+         * @description The show starts with no items: every product is listed on air, numbered from No.1. 409 another_show_live.
          */
         post: {
             parameters: {
@@ -1326,168 +1326,6 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/studio-api/shows/{id}/items": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Preselect a product as the next number. Role: manager or higher. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        /** Format: uuid */
-                        product_id: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description Created */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Item"];
-                    };
-                };
-                /** @description Error */
-                default: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/studio-api/shows/{id}/items/{item_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove a preselected item before the show starts. Role: manager or higher. */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                    item_id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Removed */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Error */
-                default: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/studio-api/shows/{id}/items/order": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /** Reorder preselected items before the show starts. Role: manager or higher. */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        item_ids: string[];
-                    };
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            items: components["schemas"]["Item"][];
-                        };
-                    };
-                };
-                /** @description Error */
-                default: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
         post?: never;
         delete?: never;
         options?: never;
@@ -2074,7 +1912,7 @@ export interface paths {
         };
         /**
          * Live page event stream
-         * @description Event types: live.show_started, live.show_ended, live.show_updated, live.item_published, live.item_updated (price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned, live.item_removed, live.items_reordered. Item events carry the full ItemView in data.item.
+         * @description Event types: live.show_started, live.show_ended, live.show_updated, live.item_published, live.item_updated (price, title, photos, stock, sold out), live.item_pinned, live.item_unpinned. Item events carry the full ItemView in data.item.
          */
         get: {
             parameters: {
@@ -4441,7 +4279,7 @@ export interface components {
             /** @description Never reused or renumbered once the show is live. */
             number: number;
             /** @enum {string} */
-            source: "preselected" | "captured" | "matched";
+            source: "captured" | "matched";
             /** Format: uuid */
             product_id: string;
             /** @description Worn or held today. */
@@ -4464,7 +4302,7 @@ export interface components {
             id: string;
             number: number;
             /** @enum {string} */
-            source: "preselected" | "captured" | "matched";
+            source: "captured" | "matched";
             pinned: boolean;
             /** @description Listed on air in the last 15 minutes. */
             is_new: boolean;
