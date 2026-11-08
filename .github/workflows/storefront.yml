@@ -1,0 +1,59 @@
+name: storefront
+
+on:
+  push:
+    paths: ["storefront/**", "hg-server/**", "api/**", ".github/workflows/storefront.yml"]
+  pull_request:
+    paths: ["storefront/**", "hg-server/**", "api/**", ".github/workflows/storefront.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: storefront
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: storefront/package-lock.json
+      - run: npm ci
+      - name: API types are up to date
+        run: npm run gen:api && git diff --exit-code app/api/schema.d.ts
+      - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: hglobal
+          POSTGRES_PASSWORD: hglobal_dev
+          POSTGRES_DB: hglobal_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hglobal -d hglobal_e2e"
+          --health-interval 2s --health-retries 30
+    defaults:
+      run:
+        working-directory: storefront
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hg-server/go.mod
+          cache-dependency-path: hg-server/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: storefront/package-lock.json
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

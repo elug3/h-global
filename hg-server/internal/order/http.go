@@ -47,6 +47,7 @@ func (h *Handler) RegisterAPI(rt *httpx.Router) {
 	c.Handle("GET", "/orders", h.customerList)
 	c.Handle("GET", "/orders/{id}", h.customerGet)
 	c.Handle("GET", "/orders/{id}/media/{media_id}", h.media(true))
+	c.Handle("GET", "/orders/{id}/payment", h.customerPayment)
 	c.Handle("POST", "/orders/{id}/cancel", h.customerCancel)
 	c.Handle("POST", "/orders/{id}/receipt", h.confirmReceipt)
 	c.Handle("PUT", "/orders/{id}/customs-code", h.customsCode)
@@ -321,6 +322,27 @@ func (h *Handler) customerGet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.JSON(w, http.StatusOK, o)
+}
+
+// customerPayment returns the order's latest payment, so a customer can see
+// the virtual account to pay into again.
+func (h *Handler) customerPayment(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpx.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	_, cid := customer(r)
+	if _, err := h.Svc.GetForCustomer(r.Context(), id, cid); err != nil {
+		return err
+	}
+	list, err := h.Svc.Payments.ForOrder(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		return apperr.NotFound("payment")
+	}
+	return httpx.JSON(w, http.StatusOK, list[0]) // newest first
 }
 
 func (h *Handler) customerCancel(w http.ResponseWriter, r *http.Request) error {

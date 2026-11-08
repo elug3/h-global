@@ -347,6 +347,7 @@ op("POST", "/studio-api/orders/{id}/cancel", "studio-orders", "Cancel and refund
 op("GET", "/api/orders", "orders", "My orders", resp(items_of(ref("Order"))), CUST, params=[q("limit", I())])
 op("GET", "/api/orders/{id}", "orders", "My order", resp(ref("Order")), CUST)
 op("GET", "/api/orders/{id}/media/{media_id}", "orders", "Inspection file of my order", {"200": {"description": "The file"}}, CUST)
+op("GET", "/api/orders/{id}/payment", "orders", "Latest payment of my order (virtual account details)", resp(ref("Payment")), CUST)
 op("POST", "/api/orders/{id}/cancel", "orders", "Cancel my order (while unpaid or paid)", resp(ref("Order")), CUST,
    request={"required": False, "content": {"application/json": {"schema": obj({"reason": S()})}}})
 op("POST", "/api/orders/{id}/receipt", "orders", "Confirm receipt (delivered -> completed)", resp(ref("Order")), CUST)

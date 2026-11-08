@@ -21,11 +21,23 @@ studio.hglobal.example {
 	}
 }
 
-# storefront (not built yet) will proxy /api the same way.
-
-# Payment provider webhooks reach hg-server directly:
-# hglobal.example {
-# 	handle /hooks/* {
-# 		reverse_proxy hg-server:8080
-# 	}
-# }
+hglobal.example {
+	# Customer API and its event streams (live page), on the site's own origin
+	# so the session cookie stays first-party.
+	handle /api/* {
+		reverse_proxy hg-server:8080 {
+			flush_interval -1
+		}
+	}
+	handle /media/* {
+		reverse_proxy hg-server:8080
+	}
+	# Payment provider webhooks.
+	handle /hooks/* {
+		reverse_proxy hg-server:8080
+	}
+	handle {
+		# storefront: the server-rendered app (`npm start` in storefront/, or its Dockerfile)
+		reverse_proxy storefront:3000
+	}
+}

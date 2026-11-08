@@ -213,3 +213,34 @@ func TestOrderNumbers(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomerSeesOwnPayment(t *testing.T) {
+	_, base := setup(t)
+	staff := newClient(t, base)
+	staff.do("POST", "/studio-api/auth/login", obj{"email": "owner@hglobal.test", "password": "owner-password"}, 200, nil)
+	var p obj
+	staff.do("POST", "/studio-api/products", obj{"title": "Wallet", "price_won": 49000, "status": "live", "stock": obj{"mode": "counted", "qty": 3}}, 201, &p)
+	variant := p["variants"].([]any)[0].(obj)["id"].(string)
+
+	buyer := newClient(t, base)
+	buyer.do("POST", "/api/auth/register", obj{"email": "va@example.com", "password": "va-password"}, 201, nil)
+	var co, res obj
+	buyer.do("POST", "/api/checkout", obj{"lines": []obj{{"variant_id": variant, "qty": 1}}}, 201, &co)
+	buyer.do("PUT", "/api/checkout/"+co["id"].(string)+"/shipping", obj{
+		"recipient": "V", "phone": "010", "postcode": "1", "address1": "Seoul", "pccc": "P123456789012"}, 200, nil)
+	buyer.do("POST", "/api/checkout/"+co["id"].(string)+"/pay", obj{"method": "virtual_account"}, 201, &res)
+	orderID := res["order"].(obj)["id"].(string)
+
+	// The buyer can see the account to pay into again later.
+	var pay obj
+	buyer.do("GET", "/api/orders/"+orderID+"/payment", nil, 200, &pay)
+	va, _ := pay["virtual_account"].(obj)
+	if pay["id"] != res["payment"].(obj)["id"] || va == nil || va["account"] == "" {
+		t.Fatalf("payment: %v", pay)
+	}
+	// Nobody else can.
+	other := newClient(t, base)
+	other.do("POST", "/api/auth/register", obj{"email": "other@example.com", "password": "other-password"}, 201, nil)
+	other.do("GET", "/api/orders/"+orderID+"/payment", nil, 404, nil)
+	newClient(t, base).do("GET", "/api/orders/"+orderID+"/payment", nil, 401, nil)
+}

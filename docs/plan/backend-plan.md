@@ -57,10 +57,18 @@ screen (sales, keep listed, sale period, completion list, KakaoTalk recap text) 
 management. Tested end to end in a browser against hg-server and the relay. For these screens
 hg-server gained order search, order counts per status and sales per stream (5.7).
 
+**storefront (2026-11-08):** built in Korean ([storefront/README.md](../../storefront/README.md)),
+server-rendered with React Router: home (live banner, optional next-stream card), live page with
+live updates and the product sheet, recap, product page with share tags, email sign-in, checkout
+with the hold timer, postcode search and customs code, a test payment page for the fake provider,
+payment result and virtual account, my orders and order detail. Tested end to end in a browser from
+listing on air to receipt. hg-server gained `GET /api/orders/{id}/payment` (the virtual account
+again).
+
 **Not built yet:** YouTube Data API, hg-agent (5.6),
-notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses, cart, 1:1 chat,
-the internal API, storefront, the recap share image (5.7), and editing a product's options after
-it is created.
+notifications, a real payment provider (D2), Kakao sign-in (D3), saved addresses on the account
+(kept on the device for now), cart, reviews, 1:1 chat, the internal API, the recap share image
+(5.7), and editing a product's options after it is created.
 
 ## 1. Summary
 

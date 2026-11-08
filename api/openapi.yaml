@@ -2005,6 +2005,33 @@ paths:
       schema:
         type: string
         format: uuid
+  /api/orders/{id}/payment:
+    get:
+      tags:
+      - orders
+      summary: Latest payment of my order (virtual account details)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - customerSession: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   /api/orders/{id}/cancel:
     post:
       tags:

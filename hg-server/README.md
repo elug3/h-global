@@ -225,6 +225,9 @@ the stream started, and no later stream featuring the same product had started b
 uncanceled orders give `orders`, `units` and `sales_won` (line totals, shipping excluded), in total
 and per item; `pending_orders` and `canceled_orders` are counted beside them.
 
+`GET /api/orders/{id}/payment` returns the order's latest payment, so the buyer can see the
+virtual account to pay into again.
+
 With the fake provider, `POST /api/dev/payments/{id}/approve` plays the customer paying
 (`HG_DEV_ROUTES=true`).
 
@@ -256,6 +259,7 @@ go vet ./...
 |---|---|
 | `internal/app` `TestLiveStreamToDelivery` | The plan's end-to-end flow over HTTP: go live, viewer stream, capture, quick listing, two buyers racing for one unit, pay, inspect, customs check, ship, deliver, receipt, replay links, recap |
 | `internal/app` `TestOrderNumbers` | `HG-YYMMDD-XXXXX` numbers: twenty orders at once all different and well formed, a taken code is retried, search with or without hyphens |
+| `internal/app` `TestCustomerSeesOwnPayment` | The buyer sees their virtual account again; other customers and visitors cannot |
 | `internal/app` `TestOrderSearchCountsAndShowSales` | Order search and status counts; sales per stream, including an order before the stream, a canceled one, an unpaid one and the same product in a later stream |
 | `internal/app` `TestPaidCancelRefundsAndReturnsStock`, `TestAccessRules` | Refund and stock return; roles, session separation, cross-site origin check |
 | `internal/app` `TestRoutesMatchOpenAPI` | Every route is in `api/openapi.yaml` and nothing extra is documented |
